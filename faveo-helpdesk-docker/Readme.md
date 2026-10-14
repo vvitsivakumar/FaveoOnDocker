@@ -28,7 +28,6 @@ This guide explains how to install **Faveo Helpdesk** (paid editions) on Docker 
 16. [Examples](#16-examples)
 17. [FAQ](#17-faq)
 18. [Community Edition](#18-community-edition)
-19. [Finishing the setup in the browser (manual)](#19-finishing-the-setup-in-the-browser-manual)
 
 ---
 
@@ -713,27 +712,3 @@ sudo ./faveo-community-run.sh -domainname helpdesk.example.com -email admin@exam
 Passwords are shown at the end and saved in `credentials.txt` in this folder. Then [finish the setup in the browser](#19-finishing-the-setup-in-the-browser-manual).
 
 ---
-
-## 19. Finishing the setup in the browser (manual)
-
-Needed for the **Community Edition**, and for `faveo-run.sh` only when `--skip-faveo-setup` was used or the automatic setup failed.
-
-1. Open `https://<domain>` (add `:<port>` for a custom HTTPS port) and follow the steps. When asked for the database, use `credentials.txt`:
-   - local database → host **`faveo-mysql`**, port 3306
-   - remote database → the host in `credentials.txt` (`host.docker.internal` when the database is on the same server)
-2. When the web installer is done, add this line to `faveo/.env` in the installation folder:
-   ```
-   REDIS_HOST=faveo-redis
-   ```
-3. Restart from the installation folder:
-   ```sh
-   docker compose down && docker compose up -d
-   ```
-4. If the page still does not load, remove one leftover database entry (MySQL root password from `credentials.txt`):
-   ```sh
-   docker exec -it <domain>-mysql mysql -uroot -p -h127.0.0.1 faveo
-   ```
-   ```sql
-   DELETE FROM plugins WHERE name = '';
-   ```
-   (Use your own database name instead of `faveo` if you changed it.)
