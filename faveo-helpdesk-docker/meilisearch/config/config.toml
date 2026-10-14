@@ -1,0 +1,11 @@
+env = "production"
+
+http_addr = "0.0.0.0:7700"
+
+db_path = "/meili_data"
+dump_dir = "/meili_dumps"
+snapshot_dir = "/meili_snapshots"
+
+log_level = "INFO"
+log_path = "/meili_logs"
+

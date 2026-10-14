@@ -1,0 +1,338 @@
+=====================================================================================
+ FAVEO DOCKER INSTALLER - SUPPORTED OPERATING SYSTEMS, PROCESSORS AND PARAMETERS
+=====================================================================================
+ Applies to all four installers in this repository:
+   faveo-helpdesk-docker/faveo-run.sh             Faveo Helpdesk (licensed editions)
+   faveo-helpdesk-docker/faveo-community-run.sh   Faveo Helpdesk Community Edition
+   faveo-invoicing-docker/faveo-run.sh            Faveo Invoicing (Community)
+   faveo-nd-docker/faveo-run.sh                   Faveo Network Discovery
+
+ Tested on: 13 October 2026, x86_64 host, every OS started from a clean image.
+ All four installers share the same OS-detection / Docker-installation code.
+
+
+-------------------------------------------------------------------------------------
+ 1. HOW IT WAS TESTED
+-------------------------------------------------------------------------------------
+ A) Docker install test (every OS below), 14 checks each:
+    - Installs the required tools (curl, unzip, openssl, git, cron, find)
+    - Installs Docker Engine using the OS's own method (if Docker is missing)
+    - Installs Docker Compose and Docker Buildx (if missing or too old)
+    - Docker daemon starts and runs a container
+    - Creates the Faveo Docker network (172.24.0.0/16) and database volume
+    - Validates the real docker-compose.yml, starts and stops a Faveo service
+    - Writes the Let's Encrypt renewal cron entry
+    - "--help" of all four installers detects the OS correctly
+
+ B) Full installation test (one OS per family): the complete, unmodified
+    faveo-community-run.sh with Self-Signed SSL. It passes only when the script
+    reports success, all 5 containers run (apache, mysql, redis, supervisor,
+    meilisearch) and https://<domain> answers from Faveo.
+
+ C) Faveo Helpdesk installer (faveo-helpdesk-docker/faveo-run.sh, version 2):
+    uses the same OS / Docker code as above. Additionally tested end to end on a
+    clean Debian 12 server (Docker installed by the script): install, backup,
+    --force replacement, automatic rollback after a failure, --keep-on-failure,
+    Ctrl+C rollback, remote database (create, login, backup, rollback),
+    uninstall with and without backup, and the interactive questions.
+
+
+-------------------------------------------------------------------------------------
+ 2. SUPPORTED OPERATING SYSTEMS (TESTED)
+-------------------------------------------------------------------------------------
+ RECOMMENDED FOR PRODUCTION (long-term support, most testing):
+   AlmaLinux 8/9/10, Rocky Linux 8/9/10, RHEL 8/9/10, Ubuntu LTS 22.04/24.04/26.04,
+   Debian 12/13
+
+ Result columns:  Docker = Docker install test (A)   Full = full installation test (B)
+
+ OS / Version                         Pkg mgr  Docker installed from        Docker  Full
+ -----------------------------------  -------  ---------------------------  ------  ----
+ Ubuntu 20.04 LTS                     apt      Docker official repo         PASS
+ Ubuntu 22.04 LTS                     apt      Docker official repo         PASS
+ Ubuntu 24.04 LTS                     apt      Docker official repo         PASS
+ Ubuntu 25.04                         apt      Docker official repo         PASS
+ Ubuntu 26.04 LTS                     apt      Docker official repo         PASS
+ Debian 12 (Bookworm)                 apt      Docker official repo         PASS    PASS
+ Debian 13 (Trixie)                   apt      Docker official repo         PASS
+ Linux Mint 21.3                      apt      Docker official repo         PASS
+ Linux Mint 22 (Ubuntu 24.04 base)    apt      Docker official repo         PASS
+ Kali Linux (Rolling)                 apt      Docker official repo         PASS
+ Red Hat Enterprise Linux 8           dnf      Docker official repo         PASS
+ Red Hat Enterprise Linux 9           dnf      Docker official repo         PASS
+ Red Hat Enterprise Linux 10          dnf      Docker official repo         see note 1
+ CentOS Stream 9                      dnf      Docker official repo         PASS
+ CentOS Stream 10                     dnf      Docker official repo         PASS
+ Rocky Linux 8                        dnf      Docker official repo         PASS
+ Rocky Linux 9                        dnf      Docker official repo         PASS    PASS
+ Rocky Linux 10                       dnf      Docker official repo         PASS
+ AlmaLinux 8                          dnf      Docker official repo         PASS
+ AlmaLinux 9                          dnf      Docker official repo         PASS
+ AlmaLinux 10                         dnf      Docker official repo         PASS
+ Oracle Linux 8                       dnf      Docker official repo         PASS
+ Oracle Linux 9                       dnf      Docker official repo         PASS
+ Oracle Linux 10                      dnf      Docker official repo         PASS
+ Fedora 41                            dnf      Docker official repo         PASS
+ Fedora 42                            dnf      Docker official repo         PASS
+ Fedora 43                            dnf      Docker official repo         PASS
+ Amazon Linux 2023                    dnf      Amazon repo + Compose/Buildx PASS    PASS
+ Amazon Linux 2 (EOL June 2026)       yum      amazon-linux-extras          PASS
+ openSUSE Leap 15.6                   zypper   openSUSE repo                PASS    PASS
+ openSUSE Leap 16.0                   zypper   openSUSE repo                PASS
+ openSUSE Tumbleweed                  zypper   openSUSE repo                PASS
+ SUSE Linux Enterprise Server 15 SP7  zypper   SUSE repo (note 2)           PASS
+ Arch Linux                           pacman   Arch repo                    PASS    PASS
+ Manjaro                              pacman   Manjaro repo                 PASS
+ Alpine Linux 3.19                    apk      Alpine repo                  PASS
+ Alpine Linux 3.20                    apk      Alpine repo                  PASS
+ Alpine Linux 3.21                    apk      Alpine repo                  PASS
+ Alpine Linux 3.22                    apk      Alpine repo                  PASS    PASS
+ Void Linux                           xbps     Void repo                    PASS
+
+ Other distributions based on the ones above (for example Pop!_OS, Zorin,
+ elementary OS, EuroLinux, Navy Linux, EndeavourOS) are detected through
+ /etc/os-release (ID / ID_LIKE) and use the same installation path, but were not
+ tested individually.
+
+ Note 1 - RHEL 10: needs an active Red Hat subscription so that the iptables
+          package is available. The free UBI 10 image cannot install it. The same
+          packages work on CentOS Stream 10, Rocky 10, AlmaLinux 10 and Oracle 10,
+          which all passed.
+ Note 2 - SLES: on a registered SLES server, enable the Containers Module first:
+          sudo SUSEConnect -p sle-module-containers/<version>/<arch>
+
+
+-------------------------------------------------------------------------------------
+ 3. NOT SUPPORTED
+-------------------------------------------------------------------------------------
+ - Windows (PowerShell / CMD), macOS
+     The installers are bash scripts for Linux. On Windows 10/11 use WSL2 with an
+     Ubuntu distribution; that is suitable for testing, not for production.
+ - Debian 11 and other end-of-life releases (CentOS 7/8, Ubuntu 18.04, ...)
+     Their package mirrors are archived or broken, so packages cannot install.
+ - Gentoo, NixOS, Slackware, Clear Linux
+     No automatic install. They work only if Docker, Docker Compose, curl, unzip,
+     openssl, cron and find are installed beforehand; the script then skips the
+     installation step.
+ - Alpine Linux: bash is not installed by default. Run "apk add bash" first.
+
+
+-------------------------------------------------------------------------------------
+ 4. SUPPORTED PROCESSORS (CPU ARCHITECTURE)
+-------------------------------------------------------------------------------------
+ Architecture                        Status
+ ----------------------------------  ------------------------------------------------
+ x86_64 / amd64 (Intel, AMD)         SUPPORTED - fully tested (all results above)
+ aarch64 / arm64 (AWS Graviton,      SUPPORTED - not tested on ARM hardware.
+   Oracle Ampere, Raspberry Pi 4/5     Docker, MySQL 8.4, Redis, Meilisearch and the
+   with a 64-bit OS)                   Ubuntu base image all ship ARM64 builds, and the
+                                       Dockerfiles download the ARM64 ionCube loader.
+ 32-bit ARM (armv7/armv6), i386,     NOT SUPPORTED - the official MySQL 8.4 and
+   ppc64le, s390x, riscv64             Meilisearch images are only published for
+                                       amd64 and arm64.
+
+
+-------------------------------------------------------------------------------------
+ 5. SERVER REQUIREMENTS
+-------------------------------------------------------------------------------------
+ - Run as root, or as a user with sudo rights
+ - Internet access (OS packages, Docker images, Faveo download)
+ - A domain name whose DNS A record points to the server's public IP
+   (required for Let's Encrypt; any name works for Self-Signed SSL)
+ - Free ports: 80 and 443 (web). Faveo Helpdesk (faveo-run.sh) can use other
+   ports with self-signed or paid SSL (--http-port / --https-port), and its
+   Supervisor port (9001) is published on this server only (127.0.0.1).
+   The other installers use port 9001 as well, and their Self-Signed option
+   uses 8080 / 8443 for a few seconds while generating the certificate.
+ - Firewall / cloud security group must allow inbound TCP 80 and 443 (or your
+   custom ports). "./faveo-run.sh --help" prints the right command for your OS.
+ - SELinux (RHEL family) can stay in Enforcing mode; this is handled
+   automatically.
+ - Docker and Docker Compose do NOT need to be installed beforehand; the scripts
+   install them for your OS (Faveo Helpdesk asks first, or use --install-docker
+   together with -y). An existing installation is detected and reused, and
+   Docker is enabled to start at boot so Faveo comes back after a reboot.
+
+-------------------------------------------------------------------------------------
+ 6. PARAMETERS
+-------------------------------------------------------------------------------------
+ Every installer accepts:   -h  or  --help
+ "--help" shows the parameters plus the detected OS, Docker status, firewall
+ notes, and the docker compose up/down commands for your server.
+
+ SSL options (-ssl), used by every installer:
+   A = Let's Encrypt (free SSL; the domain must be reachable from the internet
+       on port 80)
+   B = Self-Signed SSL (generated locally; browsers will show a warning)
+   C = Paid SSL (your certificate .crt, private .key and CA bundle .crt files)
+
+ ---------------------------------------------------------------------------
+ 6.1 Faveo Helpdesk (licensed editions)
+     Folder: faveo-helpdesk-docker     Script: faveo-run.sh
+ ---------------------------------------------------------------------------
+   Every option that is not given is asked for step by step, so the simplest
+   way is:   sudo ./faveo-run.sh
+   With -y nothing is asked and the required options must be given.
+   Installs into /opt/faveo/<domain> (change with -i). The old options
+   -domainname -email -license -orderno -ssl -websocket still work.
+
+   Required
+   Option             Value
+   -----------------  -------------------------------------------------------
+   -d, --domain       Domain name, without https://
+   -e, --email        Admin email (also used for Let's Encrypt)
+   -l, --license      Faveo license code (from billing.faveohelpdesk.com)
+   -o, --order        Faveo order number ('#' is removed)
+   -s, --ssl          certbot | self-signed | paid-ssl   (or A | B | C)
+
+   Paid SSL (--ssl paid-ssl) - each value: file path, PEM text or base64 PEM
+   --certfile         Certificate        (certificate.crt)  alias --ssl-cert
+   --keyfile          Private key        (private.key)      alias --ssl-key
+   --cacertfile       CA bundle / chain  (ca_bundle.crt)    alias --ssl-ca
+   Checked first: valid PEM, key matches the certificate (else stop), warning
+   if expired or not issued for the domain.
+
+   Optional                          Default
+   --------------------------------  -----------------------------------------
+   -r, --release <type>              official      (official | rc | beta)
+   -w, --websocket <yes|no>          no
+   --faveo-env <env>                 production  (production | development | testing)
+   --skip-faveo-setup                finish in the browser instead of the automatic
+                                     install:faveo + license verification
+   -i, --install-dir <path>          /opt/faveo/<domain>
+   -f, --force                       use a non-empty folder (old content is
+                                     moved to <folder>.old-<date>)
+   --db <local|remote>               local         (MySQL 8.4 container)
+   --db-name / --db-user             faveo / faveo
+   --db-password                     generated (20 characters)
+   --db-root-password                generated (local database)
+   --db-host <host|IPv4>             remote server (selects a remote database)
+   --db-port <port>                  3306
+   --db-admin-user / --db-admin-password
+                                     root / - (required for a remote database)
+   --db-ssl <yes|no>                 no
+   --db-ssl-ca / --db-ssl-cert / --db-ssl-key
+                                     CA required with --db-ssl yes
+   --db-ssl-verify <yes|no>          yes
+   --http-port / --https-port        80 / 443  (Let's Encrypt: always 80/443)
+   --supervisor-port <port|none>     9001      (this server only)
+   --auto-ports                      take the next free port if one is busy
+   --subnet <x.y.0.0/16>             first free from 172.24.0.0/16
+   --php / --node                    8.4 / 22
+   --timezone <Area/City>            Asia/Kolkata
+   -y, --yes                         no questions, no confirmation
+   --install-docker                  install Docker + Compose if missing
+   -g, --generate-only               only create the files (no SSL, download,
+                                     containers)
+   --keep-on-failure                 no rollback if the installation fails
+   --no-banner                       do not show the banner
+   --backup  [--backup-dir <path>]   back up an installation
+   --uninstall  [--backup]           remove an installation (alias --rollback)
+
+   Remote-database names of the server installer also work: --sqlreser
+   --sqlhost --sqlport --sqlusername --sqlpassword --sqlsecure --sqlsslca
+   --sqlsslcert --sqlsslkey --sqlsslverify
+
+   Value rules
+   Domain          letters, digits, '-' and '.'
+   License/Order   letters, digits and '-'
+   DB name / user  letters, digits and '_' (max 32)
+   DB passwords    8-64 characters: letters, digits and @ # % ^ * _ + = . , : ! ? -
+   Ports           1-65535; HTTP / HTTPS / Supervisor must differ
+
+   Examples
+   sudo ./faveo-run.sh -d helpdesk.example.com -e admin@example.com \
+        -l 5H876********** -o 8123****** -s certbot -w yes -y
+
+   sudo ./faveo-run.sh -d helpdesk.example.com -e admin@example.com \
+        -l 5H876********** -o 8123****** -s paid-ssl \
+        --certfile /root/ssl/certificate.crt --keyfile /root/ssl/private.key \
+        --cacertfile /root/ssl/ca_bundle.crt
+
+   sudo ./faveo-run.sh ... -s self-signed --http-port 8081 --https-port 8443
+   sudo ./faveo-run.sh ... --db-host db.example.com --db-admin-password 'Adm1n!Pass'
+   sudo ./faveo-run.sh --backup -d helpdesk.example.com -y
+   sudo ./faveo-run.sh --uninstall --backup -i /opt/faveo/helpdesk.example.com -y
+
+   If a step fails or Ctrl+C is pressed, everything the run created is rolled
+   back (asked first; automatic with -y unless --keep-on-failure).
+
+   When the containers are up, Faveo is configured automatically: the
+   supervisor container is stopped, "php artisan install:faveo" runs in the
+   Apache container, the license is verified (licenseVerification) and the
+   supervisor container is started again. The output shows SUCCESS / FAILED
+   for both. A failure here is NOT rolled back; the full output is shown.
+
+ ---------------------------------------------------------------------------
+ 6.2 Faveo Helpdesk Community Edition (no license needed)
+     Folder: faveo-helpdesk-docker     Script: faveo-community-run.sh
+ ---------------------------------------------------------------------------
+   Parameter    Required  Value
+   -----------  --------  ----------------------------------------------------
+   -domainname  Yes       Domain name pointing to this server's public IP
+   -email       Yes       Email address for Let's Encrypt registration
+   -ssl         Yes       A | B | C
+
+   Example:
+   sudo ./faveo-community-run.sh -domainname helpdesk.example.com \
+        -email admin@example.com -ssl A
+
+ ---------------------------------------------------------------------------
+ 6.3 Faveo Invoicing (Community, no license needed)
+     Folder: faveo-invoicing-docker    Script: faveo-run.sh
+ ---------------------------------------------------------------------------
+   Parameter    Required  Value
+   -----------  --------  ----------------------------------------------------
+   -domainname  Yes       Domain name to serve Faveo Invoicing from
+   -email       Yes       Email address for Let's Encrypt registration
+   -ssl         Yes       A | B | C
+
+   Example:
+   sudo ./faveo-run.sh -domainname invoicing.example.com -email admin@example.com -ssl A
+
+ ---------------------------------------------------------------------------
+ 6.4 Faveo Network Discovery
+     Folder: faveo-nd-docker           Script: faveo-run.sh
+ ---------------------------------------------------------------------------
+   Parameter    Required  Value
+   -----------  --------  ----------------------------------------------------
+   -domainname  Yes       Domain name pointing to this server's public IP
+   -email       Yes       Email address for Let's Encrypt registration
+   -license     Yes       Faveo Network Discovery license code
+   -orderno     Yes       Faveo Network Discovery order number, without '#'
+   -ssl         Yes       A | B | C
+
+   Example:
+   sudo ./faveo-run.sh -domainname nd.example.com -email admin@example.com \
+        -license 5H876********** -orderno 8123****** -ssl A
+
+
+-------------------------------------------------------------------------------------
+ 7. AFTER INSTALLATION
+-------------------------------------------------------------------------------------
+ - Database and Meilisearch credentials are printed at the end and saved in
+   credentials.txt in the installation folder (Faveo Helpdesk:
+   /opt/faveo/<domain>; the other installers: the product folder).
+ - Open https://<your domain> in a browser to finish the Faveo setup.
+ - Start / stop the containers (run inside the installation folder):
+     docker compose up -d       start
+     docker compose down        stop
+   Servers with only the old standalone tool use "docker-compose" instead.
+   "./faveo-run.sh --help" prints the exact commands for your server.
+ - Faveo Helpdesk: FAVEO-DOCKER-COMMANDS.txt in the installation folder lists the
+   check / verify / manage commands for that installation, written for the
+   server's OS (containers, logs, database, SSL, Docker service, firewall).
+ - Faveo Helpdesk backups and removal:
+     sudo ./faveo-run.sh --backup       database dump + files + configuration
+     sudo ./faveo-run.sh --uninstall    offers a backup first
+
+-------------------------------------------------------------------------------------
+ 8. WHAT THE TESTS DID NOT COVER
+-------------------------------------------------------------------------------------
+ - Let's Encrypt (option A): needs a real public domain.
+ - Licensed downloads (Helpdesk / Network Discovery): need a real license and
+   order number. These installers use the same tested OS and Docker code.
+ - ARM64 hardware (see section 4).
+ - Booting on physical or virtual machines: tests ran in clean containers, where
+   the Docker daemon is started directly instead of by systemd.
+=====================================================================================
