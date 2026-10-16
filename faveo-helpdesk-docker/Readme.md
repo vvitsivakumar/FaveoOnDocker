@@ -427,6 +427,7 @@ Everything is inside the installation folder (default `/opt/faveo/<domain>`):
 |---|---|
 | `credentials.txt` | URL, license code, order number, database host / name / user / passwords, Meilisearch key (root only) |
 | `FAVEO-DOCKER-COMMANDS.txt` | Ready-to-use commands for this installation and this OS - health checks, logs, artisan, workers, database, SSL, Docker service, Docker update, firewall, backup (no passwords inside) |
+| `faveo-run.sh` | A copy of the installer - run `--backup`, `--uninstall` or `--help` from here, even if the repository folder is gone (new installations still start from the repository folder) |
 | `.env` | Settings used by Docker Compose (root only) |
 | `docker-compose.yml` | Container definitions |
 | `Dockerfile/` | Image recipes (apache, supervisor, selfsign) |

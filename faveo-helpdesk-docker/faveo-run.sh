@@ -218,7 +218,8 @@ usage() {
     echo "    sudo ./$SCRIPT_NAME --uninstall --backup -i /opt/faveo/hd.example.com -y"
     echo ""
     echo -e "${h}8. CREATED IN THE INSTALLATION PATH${NC}"
-    echo "    docker-compose.yml  .env  credentials.txt  FAVEO-DOCKER-COMMANDS.txt  Dockerfile/  apache/  supervisor/"
+    echo "    docker-compose.yml  .env  credentials.txt  FAVEO-DOCKER-COMMANDS.txt  faveo-run.sh (copy)"
+    echo "    Dockerfile/  apache/  supervisor/"
     echo "    ssl_copy/ or certbot/  faveo/  storage/  mysql/ (local DB)  db_ssl/ (remote DB + SSL)"
     echo "    redis/  meilisearch/  logs/"
     echo ""
@@ -372,10 +373,23 @@ resolve_cert_arg() {
 
 # Interactive: one prompt per file that accepts a path, pasted PEM or base64.
 collect_cert_material() {
-    local desc=$1 dest=$2 kind=$3 optional=${4:-n} tries=0 input line value
+    local desc=$1 dest=$2 kind=$3 optional=${4:-n} tries=0 input line value example kname="certificate"
+    # Example path for this file, shown in the prompt.
+    case "$desc" in
+        certificate.crt)          example="/home/siva/ssl/certificate.crt" ;;
+        private.key)              example="/home/siva/ssl/private.key" ;;
+        ca_bundle.crt)            example="/home/siva/ssl/ca_bundle.crt" ;;
+        *"CA certificate"*)       example="/home/siva/db-ssl/ca.pem" ;;
+        *"client certificate"*)   example="/home/siva/db-ssl/client-cert.pem" ;;
+        *"client key"*)           example="/home/siva/db-ssl/client-key.pem" ;;
+        *)                        example="/home/siva/ssl/$desc" ;;
+    esac
+    [[ "$kind" == "key" ]] && kname="private key"
     while true; do
         echo -e "${CYAN} $desc${NC}"
-        echo -e "${GREEN}   Enter the file path, or paste the content starting with -----BEGIN ...-----${NC}"
+        echo -e "${GREEN}   Enter the full path of the file on this server, e.g. ${example}${NC}"
+        echo -e "${GREEN}   or paste the content starting with -----BEGIN ...-----${NC}"
+        [[ "$optional" == "y" ]] && echo -e "${GREEN}   or press Enter to skip${NC}"
         read -r -p "$(echo -e "${YELLOW} Path or content: ${NC}")" input || die "No input."
         input=${input%$'\r'}
         if [[ "$input" == -----BEGIN* ]]; then
@@ -391,16 +405,20 @@ collect_cert_material() {
             printf '%s\n' "$value" > "$dest"; chmod 600 "$dest"
             pem_ok "$dest" "$kind" && { ok "Pasted $desc validated."; return 0; }
             rm -f "$dest"
-            echo -e "${RED} The pasted content is not a valid PEM $kind.${NC}"
+            echo -e "${RED} The pasted content is not a valid PEM $kname.${NC}"
         elif [[ -n "$input" ]]; then
             [[ "$input" == "~/"* ]] && input="$HOME${input:1}"
-            if [[ -f "$input" ]]; then
+            if [[ -d "$input" ]]; then
+                echo -e "${RED} '$input' is a folder. Give the full path of the file itself, e.g. ${example}${NC}"
+            elif [[ -f "$input" ]]; then
                 pem_ok "$input" "$kind" && { cp "$input" "$dest"; chmod 600 "$dest"; ok "Using '$input'."; return 0; }
-                echo -e "${RED} '$input' is not a valid PEM $kind.${NC}"
+                echo -e "${RED} '$input' is not a valid PEM $kname.${NC}"
             elif resolve_cert_arg "$input" "$dest" "$kind"; then
                 ok "Base64 $desc decoded and validated."; return 0
+            elif [[ "$input" == */* ]]; then
+                echo -e "${RED} File '$input' does not exist. Check the path, e.g. ${example}${NC}"
             else
-                echo -e "${RED} '$input' is not an existing file or valid PEM $kind content.${NC}"
+                echo -e "${RED} '$input' is not a file path or valid PEM $kname content. Example path: ${example}${NC}"
             fi
         elif [[ "$optional" == "y" ]]; then
             echo -e "${YELLOW} Skipped.${NC}"; return 2
@@ -409,6 +427,7 @@ collect_cert_material() {
         fi
         tries=$((tries + 1))
         [[ $tries -ge $max_retries ]] && die "Too many invalid attempts for $desc."
+        echo -e "${YELLOW} Please try again ($tries of $max_retries).${NC}"
     done
 }
 
@@ -1359,7 +1378,7 @@ backup_install() {
     tar -czf "$dest/faveo-files.tar.gz" -C "$dir" "$host_root_dir" storage 2>/dev/null \
         || { rm -rf "$dest"; die "Backup failed while archiving the Faveo files. Nothing was changed."; }
     step_done "Faveo files    faveo-files.tar.gz   ($(human_size "$dest/faveo-files.tar.gz"))"
-    for item in .env docker-compose.yml credentials.txt FAVEO-DOCKER-COMMANDS.txt apache supervisor Dockerfile ssl_copy certbot db_ssl meilisearch/config; do
+    for item in .env docker-compose.yml credentials.txt FAVEO-DOCKER-COMMANDS.txt faveo-run.sh apache supervisor Dockerfile ssl_copy certbot db_ssl meilisearch/config; do
         [[ -e "$dir/$item" ]] && cfg+=("$item")
     done
     tar -czf "$dest/config.tar.gz" -C "$dir" "${cfg[@]}" 2>/dev/null \
@@ -1908,12 +1927,17 @@ copy_templates() {
              apache/000-default.conf letsapache/000-default.conf \
              supervisor/faveo-horizon.conf supervisor/faveo-worker.conf supervisor/faveo-websocket.conf \
              dockerfile_selfsign_ssl; do
-        [[ -f "$t/$f" ]] || die "Template '$f' is missing next to $SCRIPT_NAME. Run the script from the faveo-helpdesk-docker folder of the repository."
+        [[ -f "$t/$f" ]] || die "Template '$f' is missing next to $SCRIPT_NAME. New installations must be started from the faveo-helpdesk-docker folder of the repository (the copy in an installation folder is for --backup, --uninstall and --help)."
     done
     mkdir -p Dockerfile/apache Dockerfile/supervisor apache supervisor
     cp "$t"/Dockerfile/apache/{Dockerfile,start-services.sh} Dockerfile/apache/
     cp "$t"/Dockerfile/supervisor/{Dockerfile,entrypoint.sh} Dockerfile/supervisor/
     cp "$t"/supervisor/faveo-{horizon,worker,websocket}.conf supervisor/
+    # A copy of this installer for --backup / --uninstall / --help from the installation folder.
+    local self="$SCRIPT_DIR/$(basename "${BASH_SOURCE[0]}")"
+    if [[ ! "$self" -ef "$install_dir/faveo-run.sh" ]]; then
+        cp "$self" faveo-run.sh && chmod 700 faveo-run.sh
+    fi
     if [[ "$ssl_option" == "B" ]]; then
         mkdir -p Dockerfile/selfsign
         # Only openssl is needed to create the certificates.
@@ -2503,9 +2527,9 @@ NETWORK
   Ports in use      ss -ltnp | grep -E ':($http_port|$https_port|$supervisor_port) '
 
 BACKUP AND REMOVE
-  Back up           $SCRIPT_DIR/$SCRIPT_NAME --backup -i $install_dir
+  Back up           $install_dir/faveo-run.sh --backup -i $install_dir
   List backups      ls -l $(dirname "$install_dir")/Backup/$d/
-  Remove            $SCRIPT_DIR/$SCRIPT_NAME --uninstall -i $install_dir
+  Remove            $install_dir/faveo-run.sh --uninstall -i $install_dir
 
 CLEAN UP DOCKER (frees disk space; only removes unused items)
   Unused images     docker image prune -a
@@ -2708,8 +2732,8 @@ print_summary() {
         echo ""
         echo " Manage this installation:"
         echo "   Start / stop      cd $install_dir && $DOCKER_COMPOSE up -d   |   $DOCKER_COMPOSE down"
-        echo "   Back up           sudo $SCRIPT_DIR/$SCRIPT_NAME --backup -i $install_dir"
-        echo "   Remove            sudo $SCRIPT_DIR/$SCRIPT_NAME --uninstall -i $install_dir"
+        echo "   Back up           sudo $install_dir/faveo-run.sh --backup -i $install_dir"
+        echo "   Remove            sudo $install_dir/faveo-run.sh --uninstall -i $install_dir"
         echo "   All commands      $install_dir/FAVEO-DOCKER-COMMANDS.txt  (check, logs, database, SSL, Docker service for this OS)"
         if [[ -n "$RB_MOVED" ]]; then echo "   Previous content  $RB_MOVED  (delete it when no longer needed)"; fi
     fi

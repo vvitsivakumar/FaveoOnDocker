@@ -282,14 +282,28 @@ function build_job(array $in, array $files): array
     $ssl = $v('ssl');
     if (!in_array($ssl, ['certbot', 'self-signed', 'paid-ssl'], true)) $e[] = 'Choose an SSL type.';
     $yes = fn(string $k) => $v($k) === 'yes';
-    $pem = function (string $k) use ($in, $files): string {          // uploaded file wins over pasted text
-        $text = (string) ($in[$k] ?? '');
-        if (!empty($files[$k . '_file']['tmp_name']) && is_uploaded_file($files[$k . '_file']['tmp_name'])) {
+    // Certificate / key from one of three sources: an uploaded file, pasted PEM text, or the path
+    // of a file that is already on the client server (passed as-is; the installer reads and checks
+    // it there). Returns '' when nothing usable was given.
+    $pem = function (string $k, string $src) use ($in, $files): string {
+        if ($src === 'path') {
+            $p = trim((string) ($in[$k . '_path'] ?? ''));
+            return (preg_match('#^/[A-Za-z0-9._/@+-]{1,250}$#', $p) && strpos($p, '..') === false) ? $p : '';
+        }
+        $text = '';
+        if ($src === 'paste') {
+            $text = (string) ($in[$k] ?? '');
+        } elseif (!empty($files[$k . '_file']['tmp_name']) && is_uploaded_file($files[$k . '_file']['tmp_name'])) {
             $text = (string) file_get_contents($files[$k . '_file']['tmp_name']);
         }
         $text = str_replace("\r", '', trim($text));
         return strpos($text, '-----BEGIN') === false ? '' : base64_encode($text . "\n");
     };
+    $src = function (string $k) use ($v): string {
+        $s = $v($k, 'upload');
+        return in_array($s, ['upload', 'paste', 'path'], true) ? $s : 'upload';
+    };
+    $srcHelp = ['upload' => 'upload the PEM file', 'paste' => 'paste the PEM content', 'path' => 'give the full path of the file on the client server, starting with /'];
     $dbPassRe = '/^[A-Za-z0-9@#%^*_+=.,:!?-]{8,64}$/';
     $dbPassRule = '8-64 characters: letters, digits and @ # % ^ * _ + = . , : ! ? -';
 
@@ -297,9 +311,10 @@ function build_job(array $in, array $files): array
 
     // Paid SSL certificate
     if ($ssl === 'paid-ssl') {
+        $sslSrc = $src('ssl_src');
         foreach (['certfile' => 'Certificate (.crt)', 'keyfile' => 'Private key (.key)', 'cacertfile' => 'CA bundle (.crt)'] as $k => $label) {
-            if (($b64 = $pem($k)) === '') { $e[] = "$label: upload or paste the PEM file."; continue; }
-            array_push($args, "--$k", $b64);
+            if (($val = $pem($k, $sslSrc)) === '') { $e[] = "Paid SSL - $label: " . $srcHelp[$sslSrc] . '.'; continue; }
+            array_push($args, "--$k", $val);
         }
     }
 
@@ -333,10 +348,11 @@ function build_job(array $in, array $files): array
         array_push($args, '--db-admin-user', $dbAdmin, '--db-admin-password', $dbAdminPw);
         if ($yes('db_ssl')) {
             array_push($args, '--db-ssl', 'yes');
-            if (($ca = $pem('db_ssl_ca')) === '') $e[] = 'Remote database SSL: the CA certificate is required.';
+            $dbSrc = $src('dbssl_src');
+            if (($ca = $pem('db_ssl_ca', $dbSrc)) === '') $e[] = 'Remote database SSL - CA certificate: ' . $srcHelp[$dbSrc] . '.';
             else array_push($args, '--db-ssl-ca', $ca);
-            $cert = $pem('db_ssl_cert');
-            $key = $pem('db_ssl_key');
+            $cert = $pem('db_ssl_cert', $dbSrc);
+            $key = $pem('db_ssl_key', $dbSrc);
             if (($cert === '') !== ($key === '')) $e[] = 'Remote database SSL: give both the client certificate and the client key, or neither.';
             if ($cert !== '' && $key !== '') array_push($args, '--db-ssl-cert', $cert, '--db-ssl-key', $key);
             array_push($args, '--db-ssl-verify', $v('db_ssl_verify') === 'no' ? 'no' : 'yes');
@@ -573,10 +589,22 @@ function render_page(): void
         </div>
     <?php };
     // Certificate / key: upload or paste
-    $pem = function (string $name, string $label, bool $required = false): void { ?>
+    $pem = function (string $name, string $label, string $group, string $example, bool $required = false): void { ?>
         <div><label<?= $required ? ' class="req"' : '' ?>><?= h($label) ?></label>
-          <input type="file" name="<?= $name ?>_file">
-          <textarea name="<?= $name ?>" placeholder="Or paste the content: -----BEGIN CERTIFICATE----- ... -----END CERTIFICATE-----" style="margin-top:6px"></textarea></div>
+          <div data-when="<?= $group ?>_src=upload"><input type="file" name="<?= $name ?>_file"></div>
+          <div data-when="<?= $group ?>_src=paste"><textarea name="<?= $name ?>" placeholder="-----BEGIN ...----- ... -----END ...-----"></textarea></div>
+          <div data-when="<?= $group ?>_src=path"><input type="text" name="<?= $name ?>_path" placeholder="e.g. <?= h($example) ?>"></div>
+        </div>
+    <?php };
+    // How the certificate files are provided
+    $srcChoice = function (string $group): void { ?>
+        <label>How do you want to provide the files?</label>
+        <div class="radio" style="margin-bottom:12px">
+          <label><input type="radio" name="<?= $group ?>_src" value="upload" checked> Upload the files</label>
+          <label><input type="radio" name="<?= $group ?>_src" value="paste"> Paste the content</label>
+          <label><input type="radio" name="<?= $group ?>_src" value="path"> Path on the client server</label>
+        </div>
+        <p class="hint" data-when="<?= $group ?>_src=path" style="margin:-4px 0 12px">The files must already be on the client server; give their full paths. They are read and checked there during the installation.</p>
     <?php };
 
     page_head('Faveo Installer'); ?>
@@ -660,10 +688,13 @@ function render_page(): void
             </select></div>
         </div>
         <div data-when="ssl=paid-ssl" style="margin-top:16px">
-          <p class="hint">Upload each file, or paste its PEM content. The key must match the certificate.</p>
+          <?php $srcChoice('ssl'); ?>
           <div class="grid">
-            <?php $pem('certfile', 'Certificate (certificate.crt)', true); $pem('keyfile', 'Private key (private.key)', true); $pem('cacertfile', 'CA bundle (ca_bundle.crt)', true); ?>
+            <?php $pem('certfile', 'Certificate (certificate.crt)', 'ssl', '/root/ssl/certificate.crt', true);
+                  $pem('keyfile', 'Private key (private.key)', 'ssl', '/root/ssl/private.key', true);
+                  $pem('cacertfile', 'CA bundle (ca_bundle.crt)', 'ssl', '/root/ssl/ca_bundle.crt', true); ?>
           </div>
+          <p class="hint">The private key must match the certificate.</p>
         </div>
       </div>
 
@@ -690,18 +721,6 @@ function render_page(): void
 
         <?php $yn('websocket', 'Do you need WebSocket (live updates and chat)?', 'no'); ?>
 
-        <?php $yn('auto_setup', 'Configure Faveo and verify the license automatically after the install?', 'yes',
-            'Choose "No" to finish the setup in the browser instead.'); ?>
-
-        <?php $yn('custom_dir', 'Do you need a custom installation folder?', 'no', 'Default: /opt/faveo/<domain>'); ?>
-        <div class="sub-q" data-when="custom_dir=yes">
-          <div class="grid">
-            <div><label for="install_dir">Installation folder</label>
-              <input type="text" id="install_dir" name="install_dir" placeholder="e.g. /opt/faveo/siva.com or /srv/faveo/siva"></div>
-          </div>
-          <?php $yn('force', 'Folder is not empty - move the old content aside?', 'no', 'The old content is renamed to <folder>.old-<date>.'); ?>
-        </div>
-
         <div class="q">
           <label>Where should the database run? <span class="opt">[local]</span></label>
           <div class="radio">
@@ -723,25 +742,13 @@ function render_page(): void
           </div>
           <?php $yn('db_ssl', 'Use an encrypted (SSL) connection to the database?', 'no'); ?>
           <div class="sub-q" data-when="db_ssl=yes">
+            <?php $srcChoice('dbssl'); ?>
             <div class="grid">
-              <?php $pem('db_ssl_ca', 'CA certificate', true); $pem('db_ssl_cert', 'Client certificate (optional)'); $pem('db_ssl_key', 'Client key (with the client certificate)'); ?>
+              <?php $pem('db_ssl_ca', 'CA certificate', 'dbssl', '/root/db-ssl/ca.pem', true);
+                    $pem('db_ssl_cert', 'Client certificate (optional)', 'dbssl', '/root/db-ssl/client-cert.pem');
+                    $pem('db_ssl_key', 'Client key (with the client certificate)', 'dbssl', '/root/db-ssl/client-key.pem'); ?>
             </div>
             <?php $yn('db_ssl_verify', "Check the database server's identity?", 'yes'); ?>
-          </div>
-        </div>
-
-        <?php $yn('custom_db', 'Do you need a custom database name, user or password?', 'no', 'Default: name and user "faveo", passwords generated.'); ?>
-        <div class="sub-q" data-when="custom_db=yes">
-          <p class="hint">Leave a field empty to keep its default. Passwords: 8-64 characters, letters, digits and @ # % ^ * _ + = . , : ! ? -</p>
-          <div class="grid">
-            <div><label for="db_name">Database name <span class="opt">[faveo]</span></label>
-              <input type="text" id="db_name" name="db_name" placeholder="e.g. siva_helpdesk (default faveo)"></div>
-            <div><label for="db_user">Database user <span class="opt">[faveo]</span></label>
-              <input type="text" id="db_user" name="db_user" placeholder="e.g. siva_user (default faveo)"></div>
-            <div><label for="db_password">Database user password <span class="opt">[generated]</span></label>
-              <input type="password" id="db_password" name="db_password" placeholder="Empty = generated"></div>
-            <div data-when="db=local"><label for="db_root_password">MySQL root password <span class="opt">[generated]</span></label>
-              <input type="password" id="db_root_password" name="db_root_password" placeholder="Empty = generated"></div>
           </div>
         </div>
 
