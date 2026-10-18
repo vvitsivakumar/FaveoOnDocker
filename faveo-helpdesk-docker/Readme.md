@@ -308,11 +308,13 @@ What the installer does with your server:
 
 1. Tests the connection with the admin account - **stops** if it cannot connect.
 2. Checks the database is new or empty - **stops** if it contains tables.
-3. If the user already exists: interactively you are asked whether to reset its password; with `-y` it **stops**.
+3. If the user already exists:
+   - it has access **only** to the Faveo database → it is reused and gets a new password (`ALTER USER ... IDENTIFIED BY ...`);
+   - it also has access to other databases (probably used by another application) → interactively you are asked; with `-y` it **stops**, so the other application keeps working.
 4. Creates the database and user, grants access, then **tests the login** as that user.
 
 A server on the same machine (`localhost` / `127.0.0.1`) is reached by the containers as `host.docker.internal` - that MySQL must accept connections from Docker, not only from 127.0.0.1.
-If the installation fails, only the database / user **created by this run** is removed. `--uninstall` never removes a remote database.
+If the installation fails, the database / user **created** by this run is removed, and so is a Faveo-only user that was **reused** (its database was empty). `--uninstall` removes the database user (it asks for the admin password, or use `--db-admin-user` / `--db-admin-password` with `-y`) but **keeps the database** with your data.
 
 Option names of the Faveo server installer also work: `--sqlreser yes|no`, `--sqlhost`, `--sqlport`, `--sqlusername`, `--sqlpassword`, `--sqlsecure`, `--sqlsslca`, `--sqlsslcert`, `--sqlsslkey`, `--sqlsslverify`.
 
@@ -481,7 +483,7 @@ If a step fails after the installation has started changing the server - or you 
 | Containers and the Docker network | Stopped and removed |
 | Faveo images built by the run | Removed (if no other installation uses them) |
 | Let's Encrypt renewal cron entry | Removed |
-| Remote database / user created by the run | Dropped (existing ones are never touched) |
+| Remote database / user created by the run, or a Faveo-only user it reused | Dropped (a database that existed before, and a user shared with other databases, are never touched) |
 | The installation folder | Deleted |
 | A folder replaced with `--force` | Put back, and its containers started again |
 
@@ -575,7 +577,8 @@ The installer shows what will be deleted, asks **yes / no**, then offers a **bac
 
 | Removed | Kept |
 |---|---|
-| Containers and Docker network | A remote database (never touched) |
+| Containers and Docker network | A remote database (your data - drop it yourself if no longer needed) |
+| The Faveo database **user** on a remote database server (needs the admin password) | |
 | The installation folder (application, database files, certificates, logs, credentials) | Backups |
 | Faveo images (if no other installation uses them) | Base images (`docker image prune -a` frees them) |
 | Let's Encrypt renewal cron entry | Docker itself |

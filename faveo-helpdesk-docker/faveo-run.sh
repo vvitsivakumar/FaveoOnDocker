@@ -76,7 +76,7 @@ DOCKER_COMPOSE=""
 install_started="n"
 RB_DIR=""; RB_MOVED=""; RB_CRON=""; RB_STACK=""; RB_IMAGES=()
 RB_REMOTE_DB_CREATED="n"; RB_REMOTE_USER_CREATED="n"
-RB_REMOTE_DB_EXISTED="n"; RB_REMOTE_USER_EXISTED="n"
+RB_REMOTE_DB_EXISTED="n"; RB_REMOTE_USER_EXISTED="n"; RB_REMOTE_USER_REUSED="n"
 
 # Validated certificates are staged here until the installation path exists.
 STAGE_DIR=$(mktemp -d) || { echo "Cannot create a temporary directory." >&2; exit 1; }
@@ -153,7 +153,7 @@ usage() {
     printf "$o" "--db-ssl-verify <yes|no>"  "Check the server's identity                 [yes]"
     echo "    The database and user are created on the server and a login is tested. The"
     echo "    database must be new or empty. Rollback removes only what this run created;"
-    echo "    --uninstall never removes a remote database."
+    echo "    --uninstall removes the database user (with the admin password) but keeps the database."
     echo -e "    ${BOLD}Ports and Docker network${NC}"
     printf "$o" "--http-port <port>"        "HTTP port on this server                    [80]"
     printf "$o" "--https-port <port>"       "HTTPS port on this server                   [443]"
@@ -1185,12 +1185,25 @@ remote_db_check() {
     fi
     if [[ "$(remote_mysql "$db_admin_user" "$db_admin_password" -e "SELECT COUNT(*) FROM mysql.user WHERE user='$db_user' AND host='%';" 2>/dev/null)" == "1" ]]; then
         RB_REMOTE_USER_EXISTED="y"
-        warn "Database user '$db_user' already exists on $db_host."
-        if interactive; then
-            read -r -p "$(echo -e "${YELLOW} Set its password and give it access to '$db_name'? (y/N): ${NC}")" answer || answer=""
-            [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]] || die "Choose another database user (--db-user) and run again."
+        # Reusing the user (with a new password) is safe only when it belongs to Faveo: its grants
+        # may cover just the login right (USAGE ON *.*) and the Faveo database. A user with access
+        # to other databases is probably used by another application - changing its password would
+        # break that application.
+        local grants other
+        grants=$(remote_mysql "$db_admin_user" "$db_admin_password" -e "SHOW GRANTS FOR '$db_user'@'%';" 2>/dev/null)
+        other=$(grep -vE "^GRANT USAGE ON \*\.\* TO " <<<"$grants" | grep -vE " ON [\`']?${db_name}[\`']?\.\* TO " | grep -v '^[[:space:]]*$')
+        if [[ -n "$grants" && -z "$other" ]]; then
+            warn "Database user '$db_user' already exists on $db_host and has access only to '$db_name' - reusing it with a new password."
+            RB_REMOTE_USER_REUSED="y"
         else
-            die "Database user '$db_user' already exists on $db_host. Choose another --db-user."
+            warn "Database user '$db_user' already exists on $db_host and has access to other databases too:"
+            [[ -n "$other" ]] && sed 's/^/          /' <<<"$other"
+            if interactive; then
+                read -r -p "$(echo -e "${YELLOW} Change its password anyway? Other applications using it will stop working. (y/N): ${NC}")" answer || answer=""
+                [[ "$answer" =~ ^([yY]|[yY][eE][sS])$ ]] || die "Choose another database user (--db-user) and run again."
+            else
+                die "Database user '$db_user' on $db_host is also used for other databases. Choose another --db-user, so its password is not changed."
+            fi
         fi
     fi
 }
@@ -1220,9 +1233,47 @@ remote_db_rollback() {
         remote_mysql "$db_admin_user" "$db_admin_password" -e "DROP DATABASE IF EXISTS \`$db_name\`;" >/dev/null 2>&1 \
             && step_done "Dropped database $db_name on $db_host (created by this run)"
     fi
-    if [[ "$RB_REMOTE_USER_CREATED" == "y" ]]; then
+    if [[ "$RB_REMOTE_USER_CREATED" == "y" || "$RB_REMOTE_USER_REUSED" == "y" ]]; then
         remote_mysql "$db_admin_user" "$db_admin_password" -e "DROP USER IF EXISTS '$db_user'@'%';" >/dev/null 2>&1 \
-            && step_done "Dropped database user $db_user on $db_host (created by this run)"
+            && step_done "Dropped database user $db_user on $db_host ($([[ "$RB_REMOTE_USER_REUSED" == "y" ]] && echo "reused" || echo "created") by this run)"
+    fi
+}
+
+# --uninstall of a remote-database installation: remove the Faveo database user from the
+# database server (the database itself is kept). Needs the admin account, which is not stored:
+# asked for interactively, or --db-admin-user / --db-admin-password.
+uninstall_remote_db_user() {
+    local dir=$1 answer err
+    db_host=$(env_get "$dir" DB_HOST_FROM_SERVER); db_port=$(env_get "$dir" DB_PORT); db_port=${db_port:-3306}
+    db_user=$(env_get "$dir" DB_USERNAME); db_ssl=$(env_get "$dir" DB_SSL); db_ssl_verify=$(env_get "$dir" DB_SSL_VERIFY)
+    [[ -n "$db_host" && -n "$db_user" ]] || { warn "Database server details not found in .env - the database user was not removed."; return 0; }
+    if [[ "$db_ssl" == "yes" ]]; then
+        cp "$dir/db_ssl/ca.pem" "$STAGE_DIR/db-ca.pem" 2>/dev/null
+        [[ -f "$dir/db_ssl/client-cert.pem" ]] && cp "$dir/db_ssl/client-cert.pem" "$STAGE_DIR/db-cert.pem"
+        [[ -f "$dir/db_ssl/client-key.pem"  ]] && cp "$dir/db_ssl/client-key.pem"  "$STAGE_DIR/db-key.pem"
+    fi
+    if [[ "$db_admin_pw_given" != "y" ]]; then
+        if ! interactive; then
+            warn "Database user '$db_user' on $db_host was not removed - add --db-admin-user and --db-admin-password to remove it."
+            return 0
+        fi
+        read -r -p "$(echo -e "${YELLOW} Remove the database user '$db_user' from $db_host? (the database itself is kept) (Y/n): ${NC}")" answer || answer="n"
+        if [[ ! "${answer:-y}" =~ ^([yY]|[yY][eE][sS])$ ]]; then
+            warn "Database user '$db_user' on $db_host was kept."
+            return 0
+        fi
+        if [[ -z "$db_admin_user" ]]; then
+            read -r -p "$(echo -e "${YELLOW} Admin user of $db_host [root]: ${NC}")" db_admin_user || db_admin_user=""
+        fi
+        ask_secret db_admin_password "Password of '${db_admin_user:-root}'"
+    fi
+    db_admin_user=${db_admin_user:-root}
+    command -v docker >/dev/null 2>&1 || { warn "Docker is not available - the database user was not removed."; return 0; }
+    if err=$(remote_mysql "$db_admin_user" "$db_admin_password" -e "DROP USER IF EXISTS '$db_user'@'%';" 2>&1); then
+        step_done "Removed database user $db_user from $db_host"
+    else
+        warn "Could not remove database user '$db_user' from $db_host: $(grep -v 'Using a password' <<<"$err" | tail -1)"
+        warn "Remove it on the database server with: DROP USER '$db_user'@'%';"
     fi
 }
 
@@ -1498,7 +1549,7 @@ on_failure() {
         [[ ${#RB_IMAGES[@]} -gt 0 ]] && echo "   - images built by this run: ${RB_IMAGES[*]}"
         [[ -n "$RB_CRON" ]]  && echo "   - the certificate renewal cron entry"
         [[ "$RB_REMOTE_DB_CREATED" == "y" ]]   && echo "   - database $db_name on $db_host"
-        [[ "$RB_REMOTE_USER_CREATED" == "y" ]] && echo "   - database user $db_user on $db_host"
+        [[ "$RB_REMOTE_USER_CREATED" == "y" || "$RB_REMOTE_USER_REUSED" == "y" ]] && echo "   - database user $db_user on $db_host"
         read -r -p "$(echo -e "${YELLOW} Roll back now? (Y/n): ${NC}")" answer || answer="y"
         answer=${answer:-y}
     fi
@@ -1545,7 +1596,7 @@ run_uninstall() {
     echo "   Data in the folder  : application, $([[ "$dbloc" == "local" ]] && echo "database (mysql/), ")certificates, logs, credentials.txt"
     echo "   Docker images       : faveo-apache / faveo-supervisor (php$php-node$node), if no other installation uses them"
     echo "   Cron                : the Let's Encrypt renewal entry (if any)"
-    [[ "$dbloc" == "remote" ]] && echo "   Remote database     : $rname on $rhost - NOT touched"
+    [[ "$dbloc" == "remote" ]] && echo "   Database user       : $(env_get "$dir" DB_USERNAME) on $rhost (admin password needed; the database $rname itself is KEPT)"
     echo ""
     if [[ "$assume_yes" != "y" ]]; then
         while true; do
@@ -1570,11 +1621,12 @@ run_uninstall() {
     fi
     echo ""
     echo -e "${CYAN} Removing the Faveo installation for $dom...${NC}"
+    [[ "$dbloc" == "remote" ]] && uninstall_remote_db_user "$dir"
     remove_install "$dir" "$dom" "faveo-apache:php$php-node$node" "faveo-supervisor:php$php-node$node"
     echo ""
     echo -e "${GREEN} ✔ The Faveo installation for $dom has been removed.${NC}"
     [[ -n "${LAST_BACKUP:-}" ]] && echo -e "   Backup: ${GREEN}$LAST_BACKUP${NC}"
-    [[ "$dbloc" == "remote" ]] && warn "The remote database '$rname' on $rhost was not removed; drop it there if it is no longer needed."
+    [[ "$dbloc" == "remote" ]] && warn "The remote database '$rname' on $rhost was kept (it holds the helpdesk data); drop it there if it is no longer needed."
     echo "   Base images (ubuntu, mysql, redis, meilisearch) were kept. Free that space with: docker image prune -a"
     exit 0
 }
