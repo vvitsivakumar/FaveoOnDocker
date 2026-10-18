@@ -25,6 +25,7 @@ const SSHPASS_BIN     = '/usr/bin/sshpass';
 const SSH_BIN         = '/usr/bin/ssh';
 const REPO_TARBALL    = 'https://codeload.github.com/vvitsivakumar/FaveoOnDocker/tar.gz/refs/heads/main';
 const REPO_FOLDER     = 'FaveoOnDocker-main/faveo-helpdesk-docker';
+const STANDALONE_FOLDER = 'FaveoOnDocker-main/stand-alone-installl';   // standalone (no containers) installer
 const REMOTE_DIR      = '$HOME/faveo-docker-installer';   // where the client server keeps the installer
 
 // ----------------------------------------------------------------------------
@@ -242,8 +243,9 @@ function build_job(array $in, array $files): array
     $isHost = fn(string $s) => filter_var($s, FILTER_VALIDATE_IP) !== false
         || (bool) preg_match('/^(?=.{1,253}$)[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)*$/', $s);
 
-    if ($v('install_type') !== 'docker') {
-        return [null, ['Only the Docker installation is available at the moment.']];
+    $type = $v('install_type');
+    if (!in_array($type, ['docker', 'standalone'], true)) {
+        return [null, ['Choose Docker or Standalone - Kubernetes is not available yet.']];
     }
 
     // Client server / SSH
@@ -307,16 +309,76 @@ function build_job(array $in, array $files): array
     $dbPassRe = '/^[A-Za-z0-9@#%^*_+=.,:!?-]{8,64}$/';
     $dbPassRule = '8-64 characters: letters, digits and @ # % ^ * _ + = . , : ! ? -';
 
-    $args = ['-d', $domain, '-e', $email, '-l', $license, '-o', $order, '-s', $ssl, '-y', '--no-banner'];
-
-    // Paid SSL certificate
+    // Paid SSL certificate (same options for both installers)
+    $sslArgs = [];
     if ($ssl === 'paid-ssl') {
         $sslSrc = $src('ssl_src');
         foreach (['certfile' => 'Certificate (.crt)', 'keyfile' => 'Private key (.key)', 'cacertfile' => 'CA bundle (.crt)'] as $k => $label) {
             if (($val = $pem($k, $sslSrc)) === '') { $e[] = "Paid SSL - $label: " . $srcHelp[$sslSrc] . '.'; continue; }
-            array_push($args, "--$k", $val);
+            array_push($sslArgs, "--$k", $val);
         }
     }
+
+    $ssh = ['host' => $host, 'ssh_port' => $sshPort, 'ssh_user' => $sshUser, 'auth' => $auth,
+            'ssh_password' => $sshPassword, 'ssh_key' => $sshKey, 'sudo_password' => $sudoPassword];
+
+    // ------------------------------------------------------------------ Standalone (stand-alone-installl/faveo.sh)
+    if ($type === 'standalone') {
+        if (strlen($license) !== 16) $e[] = 'Standalone: the license code must be exactly 16 characters.';
+        if (strlen($order) !== 8) $e[] = 'Standalone: the order number must be exactly 8 characters.';
+        $pick = function (string $k, array $allowed, string $default, string $label) use ($v, &$e): string {
+            $val = $v($k, $default);
+            if (!in_array($val, $allowed, true)) { $e[] = "$label must be " . implode(', ', $allowed) . '.'; return $default; }
+            return $val;
+        };
+        $sa = ['--domain', $domain, '--email', $email, '--license', $license, '--order', $order, '--ssl', $ssl];
+        $sa = array_merge($sa, $sslArgs);
+        array_push($sa,
+            '--release',   $pick('sa_release', ['official', 'rc', 'beta'], 'official', 'Release'),
+            '--faveoenv',  $pick('sa_env', ['production', 'development', 'testing'], 'production', 'Environment'),
+            '--webserver', $pick('sa_webserver', ['apache', 'nginx'], 'apache', 'Web server'),
+            '--sql',       $pick('sa_sql', ['mysql', 'mariadb'], 'mysql', 'Database engine'),
+            '--meili',     $pick('sa_meili', ['yes', 'no'], 'yes', 'Meilisearch'),
+            '--node',      $pick('sa_node', ['yes', 'no'], 'yes', 'Node.js'),
+            '--nats',      $pick('sa_nats', ['yes', 'no'], 'no', 'NATS'));
+        $php = $v('sa_php') ?: '8.4';
+        if (!preg_match('/^([8-9]|[1-9][0-9])\.[0-9]+$/', $php)) $e[] = 'PHP version must be 8.x or newer, e.g. 8.4.';
+        array_push($sa, '--php', $php);
+
+        if ($v('sa_db') === 'remote') {
+            $dbHost = $v('sa_db_host');
+            if (!$isHost($dbHost)) $e[] = 'Remote database: server address is not valid.';
+            $dbPort = $port('sa_db_port', 'Remote database port') ?? 3306;
+            $dbUser = $v('sa_db_user');
+            if ($dbUser === '' || strpos($dbUser, '--') === 0) $e[] = 'Remote database: admin user is required.';
+            $dbPw = (string) ($in['sa_db_password'] ?? '');
+            if ($dbPw === '' || strpos($dbPw, '--') === 0) $e[] = 'Remote database: admin password is required (and cannot start with --).';
+            array_push($sa, '--sqlreser', 'yes', '--sqlhost', $dbHost, '--sqlport', (string) $dbPort,
+                '--sqlusername', $dbUser, '--sqlpassword', $dbPw);
+            if ($yes('sa_db_ssl')) {
+                $dbSrc = $src('sadbssl_src');
+                array_push($sa, '--sqlsecure', 'yes');
+                if (($ca = $pem('sa_db_ssl_ca', $dbSrc)) === '') $e[] = 'Remote database SSL - CA certificate: ' . $srcHelp[$dbSrc] . '.';
+                else array_push($sa, '--sqlsslca', $ca);
+                $cert = $pem('sa_db_ssl_cert', $dbSrc);
+                $key = $pem('sa_db_ssl_key', $dbSrc);
+                if (($cert === '') !== ($key === '')) $e[] = 'Remote database SSL: give both the client certificate and the client key, or neither.';
+                if ($cert !== '' && $key !== '') array_push($sa, '--sqlsslcert', $cert, '--sqlsslkey', $key);
+                array_push($sa, '--sslverify', $v('sa_db_ssl_verify') === 'no' ? 'no' : 'yes');
+            } else {
+                array_push($sa, '--sqlsecure', 'no');
+            }
+        } else {
+            array_push($sa, '--sqlreser', 'no');
+        }
+
+        if ($e) return [null, $e];
+        return [$ssh + ['remote_script' => remote_script(STANDALONE_FOLDER, 'faveo.sh', 'bash faveo.sh', $sa)], []];
+    }
+
+    // ------------------------------------------------------------------ Docker (faveo-helpdesk-docker/faveo-run.sh)
+    $args = ['-d', $domain, '-e', $email, '-l', $license, '-o', $order, '-s', $ssl, '-y', '--no-banner'];
+    $args = array_merge($args, $sslArgs);
 
     // Release and features
     $release = $v('release', 'official');
@@ -426,10 +488,20 @@ function build_job(array $in, array $files): array
 
     if ($e) return [null, $e];
 
-    $remote = sprintf(<<<'SH'
+    return [$ssh + ['remote_script' => remote_script(REPO_FOLDER, 'faveo-run.sh', './faveo-run.sh', $args)], []];
+}
+
+/**
+ * Script run on the client server over SSH: checks root / sudo, downloads the
+ * repository tarball, unpacks the installer folder and runs the installer with
+ * the given (shell-escaped) arguments. The sudo password, if any, arrives on stdin.
+ */
+function remote_script(string $folder, string $label, string $runner, array $args): string
+{
+    return sprintf(<<<'SH'
 set -o pipefail
-URL=%s
-FOLDER=%s
+URL=%1$s
+FOLDER=%2$s
 IFS= read -r SUDO_PW || true
 echo "==> Connected to $(hostname) as $(id -un)"
 if [ "$(id -u)" -eq 0 ]; then
@@ -443,9 +515,9 @@ elif [ -n "$SUDO_PW" ] && printf '%%s\n' "$SUDO_PW" | sudo -S -p '' true 2>/dev/
 else
     echo "ERROR: sudo needs a password for $(id -un) - enter the correct sudo password."; exit 1
 fi
-DIR="%s"
+DIR="%3$s"
 mkdir -p "$DIR" && cd "$DIR" || { echo "ERROR: cannot create $DIR"; exit 1; }
-echo "==> Downloading faveo-helpdesk-docker from GitHub into $DIR"
+echo "==> Downloading the Faveo installer from GitHub into $DIR"
 if command -v curl >/dev/null 2>&1; then
     curl -fsSL "$URL" -o faveo.tar.gz
 elif command -v wget >/dev/null 2>&1; then
@@ -453,25 +525,20 @@ elif command -v wget >/dev/null 2>&1; then
 else
     echo "ERROR: curl or wget is needed on the client server."; exit 1
 fi || { echo "ERROR: download failed."; exit 1; }
+rm -rf "$FOLDER"
 tar -xzf faveo.tar.gz "$FOLDER" || { echo "ERROR: could not unpack the download."; exit 1; }
 rm -f faveo.tar.gz
-cd "$FOLDER" && chmod +x faveo-run.sh faveo-community-run.sh
-echo "==> Running faveo-run.sh in $PWD"
+cd "$FOLDER" && chmod +x ./*.sh
+echo "==> Running %4$s in $PWD"
 echo
 case "$SUDO_MODE" in
-    root)     ./faveo-run.sh %4$s </dev/null ;;
-    nopasswd) sudo -n ./faveo-run.sh %4$s </dev/null ;;
-    password) printf '%%s\n' "$SUDO_PW" | sudo -S -p '' ./faveo-run.sh %4$s ;;
+    root)     %5$s %6$s </dev/null ;;
+    nopasswd) sudo -n %5$s %6$s </dev/null ;;
+    password) printf '%%s\n' "$SUDO_PW" | sudo -S -p '' %5$s %6$s ;;
 esac
 SH,
-        escapeshellarg(REPO_TARBALL), escapeshellarg(REPO_FOLDER), REMOTE_DIR,
+        escapeshellarg(REPO_TARBALL), escapeshellarg($folder), REMOTE_DIR, $label, $runner,
         implode(' ', array_map('escapeshellarg', $args)));
-
-    return [[
-        'host' => $host, 'ssh_port' => $sshPort, 'ssh_user' => $sshUser, 'auth' => $auth,
-        'ssh_password' => $sshPassword, 'ssh_key' => $sshKey, 'sudo_password' => $sudoPassword,
-        'remote_script' => $remote,
-    ], []];
 }
 
 // ----------------------------------------------------------------------------
@@ -629,10 +696,12 @@ function render_page(): void
         <option value="kubernetes">Kubernetes</option>
         <option value="standalone">Standalone (no containers)</option>
       </select>
-      <p id="soon" class="notice hidden" style="margin-top:12px">This installation type is not available yet. Choose Docker.</p>
+      <p id="soon" class="notice hidden" style="margin-top:12px">This installation type is not available yet. Choose Docker or Standalone.</p>
+      <p class="hint" data-when="install_type=docker">Faveo runs in Docker containers. Works on most Linux distributions.</p>
+      <p class="hint" data-when="install_type=standalone">Faveo is installed directly on the server (Apache or Nginx, PHP, MySQL or MariaDB) - no containers.</p>
     </div>
 
-    <div id="docker" class="hidden">
+    <div id="common" class="hidden">
       <div class="card">
         <h2><span class="num">2</span> Client server (SSH access)</h2>
         <div class="grid">
@@ -679,7 +748,7 @@ function render_page(): void
             <p class="hint">From billing.faveohelpdesk.com</p></div>
           <div><label class="req" for="order">Order number</label>
             <input type="text" id="order" name="order" placeholder="e.g. 12345678" required>
-            <p class="hint">'#' is removed.</p></div>
+            <p class="hint">'#' is removed. Standalone: exactly 8 characters.</p></div>
           <div><label class="req" for="ssl">SSL certificate</label>
             <select id="ssl" name="ssl">
               <option value="certbot">Let's Encrypt (free, needs ports 80 / 443)</option>
@@ -698,6 +767,7 @@ function render_page(): void
         </div>
       </div>
 
+      <div id="docker-opts" class="hidden">
       <div class="card">
         <h2><span class="num">4</span> Installation options</h2>
         <p class="hint" style="margin-top:-8px">Answer "No" to keep the default shown in brackets.</p>
@@ -787,6 +857,84 @@ function render_page(): void
         </div>
       </div>
 
+      </div>
+
+      <div id="sa-opts" class="hidden">
+      <div class="card">
+        <h2><span class="num">4</span> Installation options - Standalone</h2>
+        <p class="hint" style="margin-top:-8px">Faveo is installed directly on the server, without containers. Supported: Ubuntu 22.04 / 24.04 / 26.04, Debian 11 / 12, RHEL, Rocky Linux and AlmaLinux 8 / 9 / 10.</p>
+
+        <div class="q">
+          <div class="grid">
+            <div><label for="sa_release">Which Faveo release? <span class="opt">[official]</span></label>
+              <select id="sa_release" name="sa_release">
+                <option value="official">Official</option>
+                <option value="rc">Release candidate (RC)</option>
+                <option value="beta">Beta</option>
+              </select></div>
+            <div><label for="sa_env">Application environment <span class="opt">[production]</span></label>
+              <select id="sa_env" name="sa_env">
+                <option value="production">Production</option>
+                <option value="development">Development</option>
+                <option value="testing">Testing</option>
+              </select></div>
+          </div>
+        </div>
+
+        <div class="q">
+          <div class="grid">
+            <div><label for="sa_webserver">Web server <span class="opt">[apache]</span></label>
+              <select id="sa_webserver" name="sa_webserver">
+                <option value="apache">Apache</option>
+                <option value="nginx">Nginx</option>
+              </select></div>
+            <div><label for="sa_sql">Database engine <span class="opt">[mysql]</span></label>
+              <select id="sa_sql" name="sa_sql">
+                <option value="mysql">MySQL</option>
+                <option value="mariadb">MariaDB</option>
+              </select></div>
+            <div><label for="sa_php">PHP version <span class="opt">[8.4]</span></label>
+              <input type="text" id="sa_php" name="sa_php" placeholder="e.g. 8.4"></div>
+          </div>
+        </div>
+
+        <?php $yn('sa_meili', 'Install Meilisearch (search engine)?', 'yes'); ?>
+        <?php $yn('sa_node', 'Install Node.js?', 'yes'); ?>
+        <?php $yn('sa_nats', 'Install NATS (needed for Network Discovery)?', 'no'); ?>
+
+        <div class="q">
+          <label>Where should the database run? <span class="opt">[local]</span></label>
+          <div class="radio">
+            <label><input type="radio" name="sa_db" value="local" checked> On this server (installed by the script)</label>
+            <label><input type="radio" name="sa_db" value="remote"> Remote MySQL / MariaDB server</label>
+          </div>
+        </div>
+        <div class="sub-q" data-when="sa_db=remote">
+          <p class="hint">The Faveo database and user are created on that server with the admin account.</p>
+          <div class="grid">
+            <div><label class="req" for="sa_db_host">Server address</label>
+              <input type="text" id="sa_db_host" name="sa_db_host" placeholder="e.g. db.siva.com or 10.0.0.20"></div>
+            <div><label for="sa_db_port">Port <span class="opt">[3306]</span></label>
+              <input type="number" id="sa_db_port" name="sa_db_port" placeholder="e.g. 3306 (default)" min="1" max="65535"></div>
+            <div><label class="req" for="sa_db_user">Admin user</label>
+              <input type="text" id="sa_db_user" name="sa_db_user" placeholder="e.g. root"></div>
+            <div><label class="req" for="sa_db_password">Admin password</label>
+              <input type="password" id="sa_db_password" name="sa_db_password" placeholder="Password of the admin user"></div>
+          </div>
+          <?php $yn('sa_db_ssl', 'Use an encrypted (SSL) connection to the database?', 'no'); ?>
+          <div class="sub-q" data-when="sa_db_ssl=yes">
+            <?php $srcChoice('sadbssl'); ?>
+            <div class="grid">
+              <?php $pem('sa_db_ssl_ca', 'CA certificate', 'sadbssl', '/root/db-ssl/ca.pem', true);
+                    $pem('sa_db_ssl_cert', 'Client certificate (optional)', 'sadbssl', '/root/db-ssl/client-cert.pem');
+                    $pem('sa_db_ssl_key', 'Client key (with the client certificate)', 'sadbssl', '/root/db-ssl/client-key.pem'); ?>
+            </div>
+            <?php $yn('sa_db_ssl_verify', "Check the database server's identity?", 'yes'); ?>
+          </div>
+        </div>
+      </div>
+      </div>
+
       <div id="errors" class="notice errors hidden" style="margin-bottom:16px"></div>
       <button class="btn" id="submit" type="submit">Install Faveo</button>
     </div>
@@ -806,8 +954,11 @@ function render_page(): void
 
   function toggle() {
     var type = $('install_type').value;
-    $('docker').classList.toggle('hidden', type !== 'docker');
-    $('soon').classList.toggle('hidden', type === '' || type === 'docker');
+    var ready = type === 'docker' || type === 'standalone';
+    $('common').classList.toggle('hidden', !ready);
+    $('docker-opts').classList.toggle('hidden', type !== 'docker');
+    $('sa-opts').classList.toggle('hidden', type !== 'standalone');
+    $('soon').classList.toggle('hidden', type === '' || ready);
     var key = form.querySelector('input[name=auth]:checked').value === 'key';
     $('auth_password').classList.toggle('hidden', key);
     $('auth_key').classList.toggle('hidden', !key);
