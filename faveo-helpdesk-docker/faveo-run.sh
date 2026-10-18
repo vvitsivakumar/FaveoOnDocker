@@ -1209,13 +1209,12 @@ remote_db_check() {
 }
 
 remote_db_create() {
-    local out req=""
-    [[ "$db_ssl" == "yes" ]] && req=" REQUIRE SSL"
+    local out
     info "Creating database '$db_name' and user '$db_user' on $db_host..."
     out=$(remote_mysql "$db_admin_user" "$db_admin_password" 2>&1 <<SQL
 CREATE DATABASE IF NOT EXISTS \`$db_name\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '$db_user'@'%' IDENTIFIED BY '$db_password';
-ALTER USER '$db_user'@'%' IDENTIFIED BY '$db_password'$req;
+ALTER USER '$db_user'@'%' IDENTIFIED BY '$db_password' REQUIRE NONE;
 GRANT ALL PRIVILEGES ON \`$db_name\`.* TO '$db_user'@'%';
 FLUSH PRIVILEGES;
 SQL
