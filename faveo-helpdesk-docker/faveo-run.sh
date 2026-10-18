@@ -2613,13 +2613,13 @@ setup_faveo_app() {
         --appurl="$site_url" --sqlengine=mysql --sqlhost="$host" \
         --dbname="$db_name" --dbuser="$db_user" --dbpass="$db_password" --sqlport="$port" \
         --securecon="$sec" --sslkey="$sslkey" --sslcert="$sslcert" --sslca="$sslca" --sslverify="$verify" \
-        --migrate=1 --dummy=0 --env="$faveo_env" 2>&1 | tee "$log"
+        --migrate=1 --dummy=0 --env="$faveo_env" --no-interaction 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
     echo -e "${CYAN} ------------------------------------------------------------------------${NC}"
     docker exec "$ctr" chown -R www-data:www-data /var/www/html >/dev/null 2>&1
 
     local failmsg
-    failmsg=$(grep -iE 'cannot be installed|installation (has )?failed|SQLSTATE\[|uncaught|fatal error' "$log" | head -1 | sed 's/^[[:space:]]*//')
+    failmsg=$(grep -iE 'cannot be installed|installation (has )?failed|SQLSTATE\[|uncaught|fatal error|^[[:space:]>]*Aborted\.' "$log" | head -1 | sed 's/^[[:space:]>]*//')
     if [[ $rc -eq 0 && -z "$failmsg" ]]; then
         FAVEO_SETUP_STATUS="success"
         # The application must reach Redis by its container name.

@@ -87,7 +87,13 @@ function run_worker(string $id): void
         $ssh = array_merge($ssh, ['-i', $keyFile, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes']);
     }
     $ssh[] = $job['ssh_user'] . '@' . $job['host'];
-    $ssh[] = 'bash -c ' . escapeshellarg($job['remote_script']);
+    // The installer script is NOT passed on the command line: one argument may be at most 128 KB
+    // on Linux, and certificates (e.g. a large CA bundle) can exceed that. Instead the script is
+    // sent over stdin as one base64 line, saved to a private temp file on the client server and
+    // run from there (it deletes itself when it starts). The next stdin line is the sudo password.
+    $ssh[] = 'umask 077; f=$(mktemp) || exit 1; '
+           . 'if IFS= read -r s && printf \'%s\' "$s" | base64 -d > "$f"; then unset s; bash "$f"; rc=$?; '
+           . 'else echo "ERROR: could not receive the installer script."; rc=1; fi; rm -f "$f"; exit $rc';
 
     file_put_contents($log, sprintf("==> %s  Connecting to %s@%s:%d (%s login)\n",
         date('Y-m-d H:i:s'), $job['ssh_user'], $job['host'], $job['ssh_port'], $job['auth']), FILE_APPEND);
@@ -99,6 +105,7 @@ function run_worker(string $id): void
         $keyFile && @unlink($keyFile);
         return;
     }
+    fwrite($pipes[0], base64_encode($job['remote_script']) . "\n");   // the installer script (see above)
     fwrite($pipes[0], $job['sudo_password'] . "\n");       // read by the remote script (sudo -S)
     fclose($pipes[0]);
     $exit = proc_close($proc);
@@ -498,7 +505,27 @@ function build_job(array $in, array $files): array
  */
 function remote_script(string $folder, string $label, string $runner, array $args): string
 {
+    // Certificates / keys given as content (base64) are written to files on the client server and
+    // passed as paths: one command-line argument may be at most 128 KB, and a CA bundle can be larger.
+    $certFlags = ['--certfile', '--keyfile', '--cacertfile', '--db-ssl-ca', '--db-ssl-cert', '--db-ssl-key',
+                  '--sqlsslca', '--sqlsslcert', '--sqlsslkey'];
+    $files = '';
+    $words = [];
+    $n = 0;
+    foreach ($args as $i => $a) {
+        $prev = $i > 0 ? $args[$i - 1] : '';
+        if (in_array($prev, $certFlags, true) && $a !== '' && $a[0] !== '/') {
+            $n++;
+            $files .= "base64 -d > \"\$CERTS/$n.pem\" <<'FAVEO_PEM_$n' || { echo \"ERROR: could not write certificate file $n.\"; exit 1; }\n"
+                    . chunk_split($a, 76, "\n") . "FAVEO_PEM_$n\n";
+            $words[] = "\"\$CERTS/$n.pem\"";
+        } else {
+            $words[] = escapeshellarg($a);
+        }
+    }
+
     return sprintf(<<<'SH'
+rm -f "$0" 2>/dev/null          # this temp file holds passwords: remove it right away (bash keeps reading it)
 set -o pipefail
 URL=%1$s
 FOLDER=%2$s
@@ -529,6 +556,10 @@ rm -rf "$FOLDER"
 tar -xzf faveo.tar.gz "$FOLDER" || { echo "ERROR: could not unpack the download."; exit 1; }
 rm -f faveo.tar.gz
 cd "$FOLDER" && chmod +x ./*.sh
+CERTS=$(mktemp -d) || { echo "ERROR: cannot create a temporary folder."; exit 1; }
+trap 'rm -rf "$CERTS"' EXIT
+trap 'rm -rf "$CERTS"; exit 130' HUP INT TERM
+%7$s
 echo "==> Running %4$s in $PWD"
 echo
 case "$SUDO_MODE" in
@@ -538,7 +569,7 @@ case "$SUDO_MODE" in
 esac
 SH,
         escapeshellarg(REPO_TARBALL), escapeshellarg($folder), REMOTE_DIR, $label, $runner,
-        implode(' ', array_map('escapeshellarg', $args)));
+        implode(' ', $words), $files);
 }
 
 // ----------------------------------------------------------------------------
