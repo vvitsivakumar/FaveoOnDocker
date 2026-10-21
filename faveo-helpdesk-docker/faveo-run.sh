@@ -1056,6 +1056,32 @@ show_os_help() {
     fi
 }
 
+# Docker is installed but its service does not start. Common on cloud images (e.g. AlmaLinux /
+# Rocky / RHEL 10): installing Docker pulls in a NEWER kernel whose modules (bridge, netfilter,
+# overlay) do not match the RUNNING kernel. Try the modules of the running kernel first; otherwise
+# show Docker's error and, if a newer kernel is waiting, ask for a reboot.
+docker_start_failed() {
+    local running newest i
+    running=$(uname -r)
+    if command -v dnf >/dev/null 2>&1 && ! { modprobe -n -q br_netfilter && modprobe -n -q overlay; } 2>/dev/null; then
+        warn "The running kernel ($running) is missing modules Docker needs - installing them for this kernel..."
+        if dnf install -y "kernel-modules-core-$running" "kernel-modules-$running" >/dev/null 2>&1; then
+            systemctl restart docker >/dev/null 2>&1
+            for i in $(seq 1 20); do docker info >/dev/null 2>&1 && { ok "Docker started."; return 0; }; sleep 1; done
+        fi
+    fi
+    echo ""
+    warn "The Docker service does not start. Its last log lines:"
+    if command -v journalctl >/dev/null 2>&1; then
+        journalctl -u docker --no-pager -n 12 2>/dev/null | sed 's/^/          /'
+    fi
+    newest=$(ls -1 /lib/modules 2>/dev/null | sort -V | tail -1)
+    if [[ -n "$newest" && "$newest" != "$running" ]]; then
+        die "A newer kernel ($newest) was installed together with Docker, but the server still runs kernel $running. Reboot the server (sudo reboot) and run the installation again - Docker is already installed."
+    fi
+    die "The Docker daemon is not running. Check the log above (or: journalctl -u docker), start it (systemctl start docker) and run again."
+}
+
 # ----------------------------------------------------------------------------
 # Prerequisites
 # ----------------------------------------------------------------------------
@@ -1125,7 +1151,7 @@ prepare_system() {
     start_docker_daemon
     local i
     for i in $(seq 1 30); do docker info >/dev/null 2>&1 && break; sleep 1; done
-    docker info >/dev/null 2>&1 || die "The Docker daemon is not running. Start it (e.g. systemctl start docker) and run again."
+    docker info >/dev/null 2>&1 || docker_start_failed
     enable_docker_on_boot
     ok "$(docker --version) (starts at boot)"
 
