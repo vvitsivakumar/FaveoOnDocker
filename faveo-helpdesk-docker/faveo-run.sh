@@ -1065,9 +1065,17 @@ docker_start_failed() {
     running=$(uname -r)
     if command -v dnf >/dev/null 2>&1 && ! { modprobe -n -q br_netfilter && modprobe -n -q overlay; } 2>/dev/null; then
         warn "The running kernel ($running) is missing modules Docker needs - installing them for this kernel..."
-        if dnf install -y "kernel-modules-core-$running" "kernel-modules-$running" >/dev/null 2>&1; then
+        local out
+        if out=$(dnf install -y "kernel-modules-core-$running" "kernel-modules-$running" 2>&1); then
+            local m
+            for m in br_netfilter overlay nf_tables nft_chain_nat iptable_nat; do modprobe "$m" >/dev/null 2>&1; done
+            # Docker already failed several times: clear systemd's start limit, then start it again.
+            systemctl reset-failed docker >/dev/null 2>&1
             systemctl restart docker >/dev/null 2>&1
-            for i in $(seq 1 20); do docker info >/dev/null 2>&1 && { ok "Docker started."; return 0; }; sleep 1; done
+            for i in $(seq 1 30); do docker info >/dev/null 2>&1 && { ok "Docker started (kernel modules for $running installed)."; return 0; }; sleep 1; done
+        else
+            warn "Could not install the modules for kernel $running (this kernel version is probably no longer in the repository):"
+            grep -iE 'error|no match|not found|unable' <<<"$out" | grep -viE 'consumer identity|subscription' | head -3 | sed 's/^/          /'
         fi
     fi
     echo ""
