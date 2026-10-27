@@ -322,7 +322,12 @@ parse_args() {
         systemctl stop php"$php_option"-fpm 2>/dev/null
         apt purge "php${php_option}*" libapache2-mod-php"$php_option" -y 2>/dev/null
         apt autoremove -y 2>/dev/null
-        rm -rf /etc/apt/trusted.gpg.d/sury-keyring.gpg /etc/apt/sources.list.d/*
+        # Remove only the PHP repo this script added (Ubuntu: ppa:ondrej/php, Debian: packages.sury.org/php)
+        rm -f /etc/apt/sources.list.d/ondrej-ubuntu-php-*.list* \
+              /etc/apt/sources.list.d/ondrej-ubuntu-php-*.sources* \
+              /etc/apt/trusted.gpg.d/ondrej-ubuntu-php*.gpg* \
+              /etc/apt/sources.list.d/sury-php.list \
+              /etc/apt/trusted.gpg.d/sury-keyring.gpg
         echo -e "$red Removed PHP $php_option packages $reset"
     }
 
