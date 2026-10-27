@@ -73,10 +73,13 @@ The Helpdesk installer has many more options - release (official / rc / beta), i
 ### 🟢 Faveo Network Discovery
 
 ```sh
-./faveo-run.sh -domainname nd.example.com -email admin@example.com -license <license code> -orderno <order number> -ssl A
+sudo ./faveo-run.sh                     # asks for everything step by step
+sudo ./faveo-run.sh -d nd.example.com -e admin@example.com -l <license code> -o <order number> -s certbot
 ```
 
-**Argument quick reference** (Invoicing and Network Discovery; Faveo Helpdesk accepts these too):
+The Network Discovery installer is the same as the Helpdesk installer (same options, backup, uninstall, rollback, automatic `install:faveo` and license verification). Its images also contain the network scanning tools (`nmap`, `arp-scan`, `nbtscan`, `avahi-utils`, `net-tools`, `php-snmp`), and it has no Meilisearch container. See the [Faveo Network Discovery guide](faveo-nd-docker/Readme.md). It installs into `/opt/faveo/<domain>`.
+
+**Argument quick reference** (Invoicing; Faveo Helpdesk and Network Discovery accept these too):
 
 | Flag | Meaning |
 |---|---|
@@ -106,7 +109,7 @@ Once you confirm, the script automatically:
 3. Downloads the Faveo codebase (or clones it, for Invoicing)
 4. Generates secure random database credentials
 5. Creates the Docker network, volumes, and starts all containers
-6. Prints your database credentials and saves them to **`credentials.txt`** - keep this file safe (Faveo Helpdesk: in `/opt/faveo/<domain>`; Invoicing / Network Discovery: in the product folder)
+6. Prints your database credentials and saves them to **`credentials.txt`** - keep this file safe (Faveo Helpdesk / Network Discovery: in `/opt/faveo/<domain>`; Invoicing: in the product folder)
 
 ---
 

@@ -1,15 +1,16 @@
 # Use the official Ubuntu base image
 FROM ubuntu:24.04
 
-# Set environment variables
-ENV TZ=Asia/Kolkata \
-    DEBIAN_FRONTEND=noninteractive 
+# PHP / Node.js versions and timezone can be changed at build time
+# (docker compose build args). Defaults: PHP 8.4, Node.js 22, Asia/Kolkata.
+ARG PHP_VERSION=8.4
+ARG NODE_VERSION=22
+ARG TZ=Asia/Kolkata
 
-# Define PHP and Node.js versions
-ENV PHP_VERSION=8.4 \
-    NODE_VERSION=22
-
-### IMPORTANT When you chage the PHP VERSION, make sure to change the ioncube loader version in the RUN command below as well.
+ENV TZ=${TZ} \
+    DEBIAN_FRONTEND=noninteractive \
+    PHP_VERSION=${PHP_VERSION} \
+    NODE_VERSION=${NODE_VERSION}
 
 # Update package lists and install initial packages
 RUN apt-get update && \
@@ -68,7 +69,7 @@ RUN apt-get install -y \
     php${PHP_VERSION}-redis \
     php${PHP_VERSION}-memcached \
     php${PHP_VERSION}-snmp
-
+    
 # Download and install ionCube Loader (x86-64 or aarch64, matching the build host)
 RUN extension_dir=$(php -i | grep ^extension_dir | awk '{print $3}') && \
     case "$(dpkg --print-architecture)" in arm64) ioncube_arch=aarch64 ;; *) ioncube_arch=x86-64 ;; esac && \
@@ -82,16 +83,17 @@ RUN extension_dir=$(php -i | grep ^extension_dir | awk '{print $3}') && \
 RUN curl -fsSL https://deb.nodesource.com/setup_${NODE_VERSION}.x | bash - && \
     apt-get install -y nodejs
 
-# Copy the entrypoint script into the container
-COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-# Configure passwordless sudo for www-data
+# Network Discovery: passwordless sudo for www-data, limited to arp-scan and nmap
 RUN apt-get update && \
     apt-get install -y sudo && \
     echo "www-data ALL=(ALL) NOPASSWD: /usr/sbin/arp-scan, /usr/bin/nmap" > /etc/sudoers.d/www-data && \
     chmod 0440 /etc/sudoers.d/www-data && \
     visudo -cf /etc/sudoers.d/www-data && \
-    rm -rf /var/lib/apt/lists/* 
-    
+    rm -rf /var/lib/apt/lists/*
+
+# Copy the entrypoint script into the container
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+
 # Make the script executable
 RUN chmod +x /usr/local/bin/entrypoint.sh
 

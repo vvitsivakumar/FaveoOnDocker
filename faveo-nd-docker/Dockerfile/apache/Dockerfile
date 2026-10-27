@@ -1,13 +1,16 @@
 # Use the official Ubuntu base image
 FROM ubuntu:24.04
 
-# Set environment variables
-ENV TZ=Asia/Kolkata \
-    DEBIAN_FRONTEND=noninteractive 
+# PHP / Node.js versions and timezone can be changed at build time
+# (docker compose build args). Defaults: PHP 8.4, Node.js 22, Asia/Kolkata.
+ARG PHP_VERSION=8.4
+ARG NODE_VERSION=22
+ARG TZ=Asia/Kolkata
 
-# Define PHP and Node.js versions
-ENV PHP_VERSION=8.4 \
-    NODE_VERSION=22
+ENV TZ=${TZ} \
+    DEBIAN_FRONTEND=noninteractive \
+    PHP_VERSION=${PHP_VERSION} \
+    NODE_VERSION=${NODE_VERSION}
 
 ### IMPORTANT When you chage the PHP VERSION, make sure to change the ioncube loader version in the RUN command below as well.
 
@@ -107,7 +110,7 @@ RUN npm install --location=global --unsafe-perm puppeteer@^24.33.0
 # Install additional dependencies for Puppeteer
 RUN apt-get update && apt-get install -y --no-install-recommends chromium ca-certificates fonts-liberation libasound2t64 libatk-bridge2.0-0 libatk1.0-0 libc6 libcairo2 libcups2 libdbus-1-3 libexpat1 libfontconfig1 libgbm1 libgcc-s1 libgdk-pixbuf-2.0-0 libglib2.0-0 libgtk-3-0 libnspr4 libnss3 libpango-1.0-0 libpangocairo-1.0-0 libstdc++6 libx11-6 libx11-xcb1 libxcb1 libxcomposite1 libxcursor1 libxdamage1 libxext6 libxfixes3 libxi6 libxrandr2 libxrender1 libxshmfence1 libxss1 libxtst6 xdg-utils wget && apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Configure passwordless sudo for www-data
+# Network Discovery: passwordless sudo for www-data, limited to arp-scan and nmap
 RUN apt-get update && \
     apt-get install -y sudo && \
     echo "www-data ALL=(ALL) NOPASSWD: /usr/sbin/arp-scan, /usr/bin/nmap" > /etc/sudoers.d/www-data && \

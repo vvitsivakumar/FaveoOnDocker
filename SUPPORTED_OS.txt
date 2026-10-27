@@ -36,6 +36,13 @@
     Ctrl+C rollback, remote database (create, login, backup, rollback),
     uninstall with and without backup, and the interactive questions.
 
+ D) Faveo Network Discovery installer (faveo-nd-docker/faveo-run.sh, version 2):
+    the same installer as C), so the same operating systems and options apply.
+    Differences: the images add nmap, arp-scan, nbtscan, avahi-utils, net-tools
+    and php-snmp, and there is no Meilisearch container (4 containers).
+    Checked: script syntax and the generated files (--generate-only); not yet
+    tested end to end on a server.
+
 
 -------------------------------------------------------------------------------------
  2. SUPPORTED OPERATING SYSTEMS (TESTED)
@@ -139,7 +146,7 @@
  - Internet access (OS packages, Docker images, Faveo download)
  - A domain name whose DNS A record points to the server's public IP
    (required for Let's Encrypt; any name works for Self-Signed SSL)
- - Free ports: 80 and 443 (web). Faveo Helpdesk (faveo-run.sh) can use other
+ - Free ports: 80 and 443 (web). Faveo Helpdesk and Network Discovery can use other
    ports with self-signed or paid SSL (--http-port / --https-port), and its
    Supervisor port (9001) is published on this server only (127.0.0.1).
    The other installers use port 9001 as well, and their Self-Signed option
