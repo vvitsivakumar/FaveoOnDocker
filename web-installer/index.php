@@ -346,7 +346,7 @@ function build_job(array $in, array $files): array
             '--webserver', $pick('sa_webserver', ['apache', 'nginx'], 'apache', 'Web server'),
             '--sql',       $pick('sa_sql', ['mysql', 'mariadb'], 'mysql', 'Database engine'),
             '--meili',     $pick('sa_meili', ['yes', 'no'], 'yes', 'Meilisearch'),
-            '--node',      $pick('sa_node', ['yes', 'no'], 'yes', 'Node.js'),
+            '--node',      $pick('sa_node', ['yes', 'no'], 'no', 'Node.js'),
             '--nats',      $pick('sa_nats', ['yes', 'no'], 'no', 'NATS'),
             '--onfailure', $pick('sa_on_failure', ['rollback', 'keep'], 'rollback', 'If the installation fails'));
         $php = $v('sa_php') ?: '8.4';
@@ -931,7 +931,7 @@ function render_page(): void
         </div>
 
         <?php $yn('sa_meili', 'Install Meilisearch (search engine)?', 'yes'); ?>
-        <?php $yn('sa_node', 'Install Node.js?', 'yes'); ?>
+        <?php $yn('sa_node', 'Install Node.js?', 'no'); ?>
         <?php $yn('sa_nats', 'Install NATS (needed for Network Discovery)?', 'no'); ?>
 
         <div class="q">

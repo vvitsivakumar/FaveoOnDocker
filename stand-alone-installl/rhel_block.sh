@@ -114,8 +114,19 @@ parse_args() {
             --faveoenv)     ENV_SETUP="$2";                 shift 2 ;;
             --onfailure)    OnFailure="$2";                 shift 2 ;;
             --backup|--backup-dir|--backup-dir=*)
-                echo -e "$red Backups are made by faveo.sh: sudo bash faveo.sh --backup [--backup-dir <path>]$reset"
-                exit 1 ;;
+                # The backup lives in faveo.sh - hand over to it (only the backup options are passed on)
+                _faveo_sh="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/faveo.sh"
+                [[ -f "$_faveo_sh" ]] || { echo -e "$red faveo.sh not found next to $0 - run: sudo bash faveo.sh --backup [--backup-dir <path>]$reset"; exit 1; }
+                _bk_args=(--backup)
+                while [[ $# -gt 0 ]]; do
+                    case "$1" in
+                        --backup)       shift ;;
+                        --backup-dir)   _bk_args+=("$1" "$2"); shift 2 ;;
+                        --backup-dir=*) _bk_args+=("$1"); shift ;;
+                        *) echo -e "$red Only --backup-dir <path> can be given with --backup (got: $1).$reset"; exit 1 ;;
+                    esac
+                done
+                exec bash "$_faveo_sh" "${_bk_args[@]}" ;;
             --help)
                 echo -e "${cyan}Usage: $0 [OPTIONS]${reset}"
                 echo ""
@@ -978,7 +989,7 @@ attempt_mariadb() {
     return 0
 }
 
-# Attempts to set up and install MySQL (8.0 or 8.4 only) via dnf module streams.
+# Attempts to set up and install MySQL (8.4 preferred, 8.0 fallback) via dnf module streams.
 # Returns 0 on success (sets SQL_Version_Installed and Sql_option_value=mysql),
 # 1 on failure. Does NOT rollback - caller decides what to do next.
 attempt_mysql() {
@@ -1005,7 +1016,7 @@ attempt_mysql() {
         return 0
     fi
 
-    MySQL_Allowed_Versions=("8.0" "8.4")
+    MySQL_Allowed_Versions=("8.4" "8.0")   # 8.4 LTS first (8.0 is end of life), 8.0 only as fallback
     MySQL_Version=""
 
     for v in "${MySQL_Allowed_Versions[@]}"; do
@@ -1178,6 +1189,28 @@ MYSQL_SCRIPT
 }
 
 # Certbot Apache:
+# Redirect HTTP (port 80) to HTTPS once self-signed / paid SSL is working.
+# (certbot already adds its own redirect via --redirect.)
+enable_https_redirect() {
+    if [[ "$Webserver_option_value" == "apache" ]]; then
+        cat <<EOF > /etc/httpd/conf.d/faveo.conf
+<VirtualHost *:80>
+    ServerName $DomainName
+    Redirect permanent / https://$DomainName/
+    ErrorLog /var/log/httpd/faveo-error.log
+    CustomLog /var/log/httpd/faveo-access.log combined
+</VirtualHost>
+EOF
+        apachectl configtest && systemctl reload httpd
+    elif [[ "$Webserver_option_value" == "nginx" ]]; then
+        local conf=/etc/nginx/conf.d/faveo-ssl.conf
+        grep -q 'if (\$scheme = http)' "$conf" || \
+            sed -i "/^\s*server_name $DomainName;/a\    if (\$scheme = http) { return 301 https://\$host\$request_uri; }" "$conf"
+        nginx -t && systemctl reload nginx
+    fi
+    echo -e "$green HTTP now redirects to https://$DomainName $reset"
+}
+
 certbot_apache() {
     echo -e "$yellow Obtaining Certificates for $DomainName from Let's Encrypt... $reset"
 
@@ -1368,6 +1401,7 @@ EOF
     test=$(curl -ks https://"$DomainName"/test.html)
     if [[ "$test" == "Test" ]]; then
         echo -e "$green Self Signed SSL successfully configured for $DomainName. $reset"
+        enable_https_redirect
         sleep 1
         sql_installation "$DomainName" "$Email" "$LicenseCode" "$OrderNumber" "$ReleaseSelection" "$Sql_option_value" "$Php_option_value" "$Meili_option_value" "$Webserver_option_value" "$Node_option_value" "$Nats_option_value" "$Ssl_option_value"
     else
@@ -1494,6 +1528,7 @@ EOF
     test=$(curl -ks https://"$DomainName"/test.html)
     if [[ "$test" == "Test" ]]; then
         echo -e "$green Self Signed SSL successfully configured for $DomainName. $reset"
+        enable_https_redirect
         sleep 1
         sql_installation "$DomainName" "$Email" "$LicenseCode" "$OrderNumber" "$ReleaseSelection" "$Sql_option_value" "$Php_option_value" "$Meili_option_value" "$Webserver_option_value" "$Node_option_value" "$Nats_option_value" "$Ssl_option_value"
     else
@@ -1622,6 +1657,7 @@ EOF
     test=$(curl -ks https://"$DomainName"/test.html)
     if [[ "$test" == "Test" ]]; then
         echo -e "$green Paid SSL successfully configured for $DomainName. $reset"
+        enable_https_redirect
         sleep 1
         sql_installation "$DomainName" "$Email" "$LicenseCode" "$OrderNumber" "$ReleaseSelection" "$Sql_option_value" "$Php_option_value" "$Meili_option_value" "$Webserver_option_value" "$Node_option_value" "$Nats_option_value" "$Ssl_option_value"
     else
@@ -2543,14 +2579,14 @@ node_option() {
         echo -e ""
         echo -e "$cyan Faveo supports Graphical Reports for Assets. This feature uses higher server resources.$reset"
         echo -e "$yellow Currently, Faveo supports Node.js 22.x.$reset"
-        echo -e "$yellow If the server specs are >= 4 vCPU and 8 GB RAM, you may install it. Default is (Yes).$reset"
-        read -p "$(echo -e "$yellow Enter (y/yes) to install or (n/no) to skip [default : y]: $reset")" Node_option_choice
+        echo -e "$yellow If the server specs are >= 4 vCPU and 8 GB RAM, you may install it. Default is (No).$reset"
+        read -p "$(echo -e "$yellow Enter (y/yes) to install or (n/no) to skip [default : n]: $reset")" Node_option_choice
 
         case "${Node_option_choice,,}" in
-            y|yes|"")
+            y|yes)
                 Node_option_value="yes"
                 ;;
-            n|no)
+            n|no|"")
                 Node_option_value="no"
                 ;;
             *)
@@ -2867,7 +2903,7 @@ attributes () {
         php_selection
     fi
 
-    # Node.js  (default: yes)
+    # Node.js  (default: no)
     if [[ -z "$Node_option_value" ]]; then
         node_option
     fi
