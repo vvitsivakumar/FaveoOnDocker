@@ -106,6 +106,10 @@ parse_args() {
             --sqlsslca)     MySQL_SSLCA="$2";               shift 2 ;;
             --sslverify)    MySQL_SSLVERIFY="$2";           shift 2 ;;
             --faveoenv)     ENV_SETUP="$2";                 shift 2 ;;
+            --onfailure)    OnFailure="$2";                 shift 2 ;;
+            --backup|--backup-dir|--backup-dir=*)
+                echo -e "$red Backups are made by faveo.sh: sudo bash faveo.sh --backup [--backup-dir <path>]$reset"
+                exit 1 ;;
             --help)
                 echo -e "${cyan}Usage: $0 [OPTIONS]${reset}"
                 echo ""
@@ -138,6 +142,11 @@ parse_args() {
                 printf "  ${green}%-15s${reset} %-35s %s\n" "--sqlsslca"    "<path>"             "MySQL SSL CA file"
                 printf "  ${green}%-15s${reset} %-35s %s\n" "--sqlsslverify" "yes|no"            "MySQL SSL Verify"
                 printf "  ${green}%-15s${reset} %-35s %s\n" "--faveoenv"    "production|development|testing" "Faveo environment"
+                printf "  ${green}%-15s${reset} %-35s %s\n" "--onfailure"   "rollback|keep"      "If the installation fails: roll back everything this run created, or keep the files to investigate (default: rollback). A failed Faveo configuration or license verification is never rolled back"
+                echo ""
+                echo "Backup (files and database of an existing installation):"
+                printf "  ${green}%-15s${reset} %-35s %s\n" "--backup"      ""                   "sudo bash faveo.sh --backup  - creates fs-<date-time>.tar.gz and db-<date-time>.sql.gz (database details from credentials.txt)"
+                printf "  ${green}%-15s${reset} %-35s %s\n" "--backup-dir"  "<path>"             "Backup folder       (default: /var/www/faveo-bkps)"
                 exit 0
                 ;;
             *)
@@ -206,10 +215,21 @@ parse_args() {
     fi
     [[ -n "$MySQL_SSLVERIFY" && ! "$MySQL_SSLVERIFY" =~ ^(yes|no)$ ]] && { echo -e "$red --sqlsslverify: must be yes or no.$reset"; errors=$((errors+1)); }
     [[ -n "$ENV_SETUP"       && ! "$ENV_SETUP"       =~ ^(production|development|testing)$ ]] && { echo -e "$red --faveoenv: must be production, development, or testing.$reset"; errors=$((errors+1)); }
+    [[ -n "$OnFailure"       && ! "$OnFailure"       =~ ^(rollback|keep)$ ]] && { echo -e "$red --onfailure: must be rollback or keep.$reset"; errors=$((errors+1)); }
     [[ $errors -gt 0 ]] && exit 1
 }
  rollback ()
 {
+    # --onfailure keep: leave everything in place so the problem can be investigated.
+    if [[ "${OnFailure:-rollback}" == "keep" ]]; then
+        echo -e "$red The installation failed. Nothing was rolled back (--onfailure keep). $reset"
+        echo -e "$yellow Kept for investigation: /var/www/faveo, the web server and SSL configuration, the database 'faveo' $reset"
+        echo -e "$yellow and every package and service installed so far. $reset"
+        echo -e "$yellow Logs: /var/www/faveo/storage/logs, /var/log/apache2 or /var/log/httpd, /var/log/nginx, journalctl -xe $reset"
+        echo -e "$yellow Clean the server (or use a fresh server) before you run the installation again. $reset"
+        exit 1
+    fi
+
     local sql_option="$1"
     local php_option="$2"
     local meili_option="$3"
@@ -409,13 +429,23 @@ Web Server: $Webserver_option_value
 Node Option: $Node_option_value
 NATS Option: $Nats_option_value
 SSL Option: $Ssl_option_value
+Database Host: ${MySQL_HOST:-localhost}
+Database Port: ${MySQL_PORT:-3306}
+Database Name: faveo
 Database Username: faveo
 Database Password: $MySQL_PASS
+Database SSL: ${MySQL_SEC:-no}
+Database SSL CA: $MySQL_SSLCA
+Database SSL Cert: $MySQL_SSLCERT
+Database SSL Key: $MySQL_SSLKEY
 Meilisearch Master Key: $Meili_PASS
 Faveo Login Username: demo_admin
 Faveo Login Password: demopass
 Faveo Environment: $ENV_SETUP
+Faveo Installation: $FAVEO_SETUP_STATUS
+License Verification: $LICENSE_STATUS
 EOF
+    chmod 600 "$OUTPUT_FILE"
 
     # Display in a table
     echo -e "${cyan}${bold}Faveo Helpdesk Installation Summary${reset}"
@@ -433,16 +463,74 @@ EOF
     printf "${yellow}%-25s${green}%-40s${reset}\n" "Node Option:" "$Node_option_value"
     printf "${yellow}%-25s${green}%-40s${reset}\n" "NATS Option:" "$Nats_option_value"
     printf "${yellow}%-25s${green}%-40s${reset}\n" "SSL Option:" "$Ssl_option_value"
+    printf "${yellow}%-25s${green}%-40s${reset}\n" "Database Host:" "${MySQL_HOST:-localhost}:${MySQL_PORT:-3306}"
     printf "${yellow}%-25s${green}%-40s${reset}\n" "Database Username:" "faveo"
     printf "${yellow}%-25s${green}%-40s${reset}\n" "Database Password:" "$MySQL_PASS"
     printf "${yellow}%-25s${green}%-40s${reset}\n" "Meilisearch Master Key:" "$Meili_PASS"
     printf "${yellow}%-25s${green}%-40s${reset}\n" "Faveo Environment:" "$ENV_SETUP"
     printf "${yellow}%-25s${green}%-40s${reset}\n" "Faveo Login Username:" "demo_admin"
     printf "${yellow}%-25s${green}%-40s${reset}\n" "Faveo Login Password:" "demopass"
+    if [[ "$FAVEO_SETUP_STATUS" == "success" ]]; then
+        printf "${yellow}%-25s${green}%-40s${reset}\n" "Faveo Installation:" "SUCCESS"
+    else
+        printf "${yellow}%-25s${red}%-40s${reset}\n" "Faveo Installation:" "FAILED (no rollback)"
+    fi
+    if [[ "$LICENSE_STATUS" == "verified" ]]; then
+        printf "${yellow}%-25s${green}%-40s${reset}\n" "License Verification:" "VERIFIED SUCCESSFULLY"
+    else
+        printf "${yellow}%-25s${red}%-40s${reset}\n" "License Verification:" "${LICENSE_STATUS^^}"
+    fi
     echo -e "${cyan}-------------------------------------------${reset}"
     echo -e "${cyan}${bold}Details also saved in $OUTPUT_FILE${reset}"
 
+    if [[ "$FAVEO_SETUP_STATUS" != "success" ]]; then
+        echo -e "$red The Faveo configuration (php artisan install:faveo) failed. Nothing was rolled back - check the output above. $reset"
+        exit 1
+    fi
+    if [[ "$LICENSE_STATUS" != "verified" ]]; then
+        echo -e "$red Faveo is installed, but the license could not be verified. Check the licenseVerification response above. Nothing was rolled back. $reset"
+        exit 1
+    fi
     exit 0
+}
+
+# License verification: POST the 16-character license code in four parts to
+# https://<domain>/licenseVerification on this server. A failure never rolls back.
+license_verification() {
+    local lic="$LicenseCode" data body code attempt msg
+    LICENSE_STATUS="not checked"
+    if [[ ${#lic} -ne 16 ]]; then
+        LICENSE_STATUS="not checked (the license code must have 16 characters)"
+        echo -e "$red License verification skipped: the license code must have 16 characters. $reset"
+        return 0
+    fi
+    data="{\"first\":\"${lic:0:4}\", \"second\":\"${lic:4:4}\", \"third\":\"${lic:8:4}\", \"forth\":\"${lic:12:4}\"}"
+    for attempt in 1 2; do
+        echo -e "$yellow Verifying the license (attempt $attempt of 2): POST https://$DomainName/licenseVerification $reset"
+        body=$(curl -k -sS --max-time 120 --resolve "$DomainName:443:127.0.0.1" -X POST "https://$DomainName/licenseVerification" \
+            -H "Content-Type: application/json" -d "$data" -w $'\nHTTP_STATUS:%{http_code}' 2>&1)
+        code=$(grep -o 'HTTP_STATUS:[0-9]*' <<<"$body" | tail -1 | cut -d: -f2)
+        echo -e "$cyan ------------------------- licenseVerification response ------------------------- $reset"
+        sed '/^HTTP_STATUS:/d' <<<"$body"
+        echo ""
+        echo "HTTP status: ${code:-none}"
+        echo -e "$cyan -------------------------------------------------------------------------------- $reset"
+        if grep -qE '"success"[[:space:]]*:[[:space:]]*true' <<<"$body"; then
+            LICENSE_STATUS="verified"
+            break
+        fi
+        msg=$(grep -o '"message"[[:space:]]*:[[:space:]]*"[^"]*"' <<<"$body" | head -1 | sed 's/^"message"[[:space:]]*:[[:space:]]*"//; s/"$//')
+        LICENSE_STATUS="failed (HTTP ${code:-none}${msg:+: $msg})"
+        if [[ $attempt -eq 1 ]]; then
+            echo -e "$yellow License verification did not succeed; trying again in 10 seconds... $reset"
+            sleep 10
+        fi
+    done
+    if [[ "$LICENSE_STATUS" == "verified" ]]; then
+        echo -e "$green License verified successfully. $reset"
+    else
+        echo -e "$red License verification failed: $LICENSE_STATUS. The installation is kept (no rollback). $reset"
+    fi
 }
 
 # FaveoCLI Installation
@@ -450,11 +538,12 @@ EOF
 faveocli() {
     echo -e "$yellow Configuring Faveo for you.. $reset"
     cd /var/www/faveo
-    php artisan install:faveo --appurl=https://$DomainName --sqlengine=mysql --sqlhost=$MySQL_HOST --dbname=faveo --dbuser=faveo --dbpass=$MySQL_PASS --sqlport=$MySQL_PORT --securecon=$MySQL_SEC --sslkey=$MySQL_SSLKEY --sslcert=$MySQL_SSLCERT --sslca=$MySQL_SSLCA --sslverify=$MySQL_SSLVERIFY --migrate=1 --dummy=0 --env=$ENV_SETUP || {
-        echo -e "$red Failed to Configure Faveo Login. Rolling back... $reset"
-        rollback "$Sql_option_value" "$Php_option_value" "$Meili_option_value" "$Webserver_option_value" "$Node_option_value" "$Nats_option_value" "$Ssl_option_value" "$certfile" "$keyfile" "$cacertfile"
-        return 1
-    }
+    # A failure here (or in the license verification) never rolls back: the installation is kept.
+    FAVEO_SETUP_STATUS="success"
+    if ! php artisan install:faveo --appurl=https://$DomainName --sqlengine=mysql --sqlhost=$MySQL_HOST --dbname=faveo --dbuser=faveo --dbpass=$MySQL_PASS --sqlport=$MySQL_PORT --securecon=$MySQL_SEC --sslkey=$MySQL_SSLKEY --sslcert=$MySQL_SSLCERT --sslca=$MySQL_SSLCA --sslverify=$MySQL_SSLVERIFY --migrate=1 --dummy=0 --env=$ENV_SETUP; then
+        FAVEO_SETUP_STATUS="failed"
+        echo -e "$red php artisan install:faveo failed - see the output above. The installation is kept (no rollback). $reset"
+    fi
 
     chown -R www-data:www-data /var/www/faveo
 
@@ -464,6 +553,12 @@ faveocli() {
     sudo -u www-data crontab -
 
     systemctl start supervisor
+
+    if [[ "$FAVEO_SETUP_STATUS" == "success" ]]; then
+        license_verification
+    else
+        LICENSE_STATUS="not checked (Faveo installation failed)"
+    fi
 
     credentials "$DomainName" "$Email" "$LicenseCode" "$OrderNumber" "$ReleaseSelection" "$Sql_option_value" "$Php_option_value" "$Meili_option_value" "$Webserver_option_value" "$Node_option_value" "$Nats_option_value" "$Ssl_option_value" "$MySQL_PASS" "$Meili_PASS"
 }
@@ -2738,6 +2833,20 @@ faveo_env_selection() {
     done
 }
 
+# If the installation fails: roll back (default) or keep everything to investigate.
+on_failure_selection() {
+    local choice
+    echo -e "$cyan If the installation fails: $reset"
+    echo -e "$cyan 1) Roll back everything this run created (default)$reset"
+    echo -e "$cyan 2) Keep the files to investigate$reset"
+    read -p "$(echo -e "$yellow Enter your choice [1-2, default: 1]: $reset")" choice
+    case "$choice" in
+        2) OnFailure="keep" ;;
+        *) OnFailure="rollback" ;;
+    esac
+    echo -e "$green You selected: $OnFailure $reset"
+}
+
 # Getting product details for Faveo Installation:
 attributes () {
     local max_retries=2
@@ -2838,6 +2947,11 @@ attributes () {
         ssl_selection
     fi
 
+    # If the installation fails  (default: rollback; asked only on a terminal)
+    if [[ -z "$OnFailure" ]]; then
+        if [[ -t 0 ]]; then on_failure_selection; else OnFailure="rollback"; fi
+    fi
+
     echo ""
     echo -e "${cyan}${bold}╔══════════════════════════════════════════════════════╗${reset}"
     echo -e "${cyan}${bold}       Faveo Installation Summary                      ${reset}"
@@ -2867,6 +2981,7 @@ attributes () {
         printf "${yellow}  %-22s${green}%s${reset}\n" "Key File:"       "$keyfile"
         printf "${yellow}  %-22s${green}%s${reset}\n" "CA Bundle:"      "$cacertfile"
     fi
+    printf "${yellow}  %-22s${green}%s${reset}\n" "If it fails:"     "$([[ "$OnFailure" == "keep" ]] && echo "keep the files to investigate" || echo "roll back everything this run created")"
     echo -e "${cyan}${bold}╚══════════════════════════════════════════════════════╝${reset}"
 
     node_installation "$DomainName" "$Email" "$LicenseCode" "$OrderNumber" "$ReleaseSelection" "$Meili_option_value" "$Nats_option_value" "$Php_option_value" "$Node_option_value" "$Sql_option_value" "$Webserver_option_value" "$Ssl_option_value" "$certfile" "$keyfile" "$cacertfile"

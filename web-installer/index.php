@@ -347,7 +347,8 @@ function build_job(array $in, array $files): array
             '--sql',       $pick('sa_sql', ['mysql', 'mariadb'], 'mysql', 'Database engine'),
             '--meili',     $pick('sa_meili', ['yes', 'no'], 'yes', 'Meilisearch'),
             '--node',      $pick('sa_node', ['yes', 'no'], 'yes', 'Node.js'),
-            '--nats',      $pick('sa_nats', ['yes', 'no'], 'no', 'NATS'));
+            '--nats',      $pick('sa_nats', ['yes', 'no'], 'no', 'NATS'),
+            '--onfailure', $pick('sa_on_failure', ['rollback', 'keep'], 'rollback', 'If the installation fails'));
         $php = $v('sa_php') ?: '8.4';
         if (!preg_match('/^([8-9]|[1-9][0-9])\.[0-9]+$/', $php)) $e[] = 'PHP version must be 8.x or newer, e.g. 8.4.';
         array_push($sa, '--php', $php);
@@ -962,6 +963,15 @@ function render_page(): void
             </div>
             <?php $yn('sa_db_ssl_verify', "Check the database server's identity?", 'yes'); ?>
           </div>
+        </div>
+
+        <div class="q">
+          <label>If the installation fails <span class="opt">[roll back]</span></label>
+          <div class="radio">
+            <label><input type="radio" name="sa_on_failure" value="rollback" checked> Roll back everything this run created</label>
+            <label><input type="radio" name="sa_on_failure" value="keep"> Keep the files to investigate</label>
+          </div>
+          <p class="hint">A failed Faveo configuration (install:faveo) or license verification is never rolled back - the installation is kept.</p>
         </div>
       </div>
       </div>
