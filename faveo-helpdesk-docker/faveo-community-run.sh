@@ -800,7 +800,7 @@ setup_meilisearch
 echo -e "\n";
 echo "Downloading Faveo Helpdesk"
 
-git clone --depth 1 https://github.com/ladybirdweb/faveo-helpdesk.git
+git clone --depth 1 https://github.com/faveosuite/faveo-helpdesk.git
 mv faveo-helpdesk faveo
 
 if [[ $? -eq 0 ]]; then

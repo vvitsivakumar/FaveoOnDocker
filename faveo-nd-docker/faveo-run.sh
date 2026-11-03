@@ -111,7 +111,7 @@ usage() {
     echo -e "${h}1. REQUIRED${NC}  ${DIM}(asked for when missing)${NC}"
     printf "$o" "-d, --domain <name>"       "Domain name, without https://       e.g. nd.example.com"
     printf "$o" "-e, --email <address>"     "Admin email (also for Let's Encrypt)"
-    printf "$o" "-l, --license <code>"      "Faveo license code (billing.faveohelpdesk.com)"
+    printf "$o" "-l, --license <code>"      "Faveo license code (store.faveohelpdesk.com)"
     printf "$o" "-o, --order <number>"      "Faveo order number ('#' is removed)"
     printf "$o" "-s, --ssl <type>"          "certbot     = Let's Encrypt, free (ports 80/443 must be free)"
     printf "$o" ""                          "self-signed = generated certificate (browser warning)"
@@ -1844,9 +1844,9 @@ collect_attributes() {
     fi
     [[ -z "$domainname" ]] && ask_value domainname "Domain name [without https://]" valid_domain "Invalid domain name."
     [[ -z "$email" ]]      && ask_value email "Email address" valid_email "Invalid email address."
-    [[ -z "$license" ]]    && ask_value license "License code [from billing.faveohelpdesk.com]" valid_code "Invalid license code (letters, digits and '-')."
+    [[ -z "$license" ]]    && ask_value license "License code [from store.faveohelpdesk.com]" valid_code "Invalid license code (letters, digits and '-')."
     if [[ -z "$orderno" ]]; then
-        ask_value orderno "Order number [from billing.faveohelpdesk.com]" valid_order "Invalid order number."
+        ask_value orderno "Order number [from store.faveohelpdesk.com]" valid_order "Invalid order number."
         orderno=${orderno#\#}
     fi
     if [[ -z "$release" ]]; then
@@ -2330,7 +2330,7 @@ ssl_paid() {
 # Application, containers, verification
 # ----------------------------------------------------------------------------
 download_faveo() {
-    local url="https://billing.faveohelpdesk.com/download/faveo?order_number=${orderno}&serial_key=${license}"
+    local url="https://store.faveohelpdesk.com/download/faveo?order_number=${orderno}&serial_key=${license}"
     [[ "$release" != "official" ]] && url+="&release=${release}"
     if [[ -n "${FAVEO_ZIP_FILE:-}" ]]; then
         # Offline / pre-downloaded archive: FAVEO_ZIP_FILE=/path/faveo.zip ./faveo-run.sh ...
@@ -2594,6 +2594,18 @@ EOF
     chmod 644 "$f"
 }
 
+# Copy the Faveo admin login printed by the install command (a table with a
+# "password" column) from the install log into credentials.txt.
+save_admin_login() {
+    local log=$1 rows
+    rows=$(sed 's/\x1b\[[0-9;]*m//g' "$log" 2>/dev/null | awk -F'|' '
+        /^\|/ && tolower($0) ~ /password/ && !n { for (i = 2; i < NF; i++) { h[i] = $i; gsub(/^ +| +$/, "", h[i]) } n = NF; next }
+        n && /^\|/ { for (i = 2; i < n; i++) { v = $i; gsub(/^ +| +$/, "", v); printf "Faveo admin %-11s : %s\n", h[i], v } exit }')
+    # Not printed? Use the default login of a fresh installation.
+    [[ -n "$rows" ]] || rows=$(printf "%-23s : %s\n%-23s : %s" "Faveo admin username" "demo_admin" "Faveo admin password" "demopass")
+    { echo ""; echo "Faveo login (change the password after the first login)"; echo "$rows"; } >> credentials.txt
+}
+
 write_credentials() {
     {
         echo "Faveo Network Discovery Docker - Credentials"
@@ -2683,6 +2695,7 @@ setup_faveo_app() {
         fi
         docker exec -u www-data -w /var/www/html "$ctr" php artisan config:clear 2>&1 | sed 's/^/   /'
         ok "Faveo installation completed (install:faveo exit code 0)."
+        save_admin_login "$log"
     else
         if [[ -n "$failmsg" ]]; then
             FAVEO_SETUP_STATUS="failed: $failmsg"

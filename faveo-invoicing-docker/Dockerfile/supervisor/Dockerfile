@@ -1,13 +1,16 @@
 # Use the official Ubuntu base image
 FROM ubuntu:24.04
 
-# Set environment variables
-ENV TZ=Asia/Kolkata \
-    DEBIAN_FRONTEND=noninteractive 
+# PHP / Node.js versions and timezone can be changed at build time
+# (docker compose build args). Defaults: PHP 8.4, Node.js 22, Asia/Kolkata.
+ARG PHP_VERSION=8.4
+ARG NODE_VERSION=22
+ARG TZ=Asia/Kolkata
 
-# Define PHP and Node.js versions
-ENV PHP_VERSION=8.4 \
-    NODE_VERSION=22
+ENV TZ=${TZ} \
+    DEBIAN_FRONTEND=noninteractive \
+    PHP_VERSION=${PHP_VERSION} \
+    NODE_VERSION=${NODE_VERSION}
 
 # Update package lists and install initial packages
 RUN apt-get update && \
