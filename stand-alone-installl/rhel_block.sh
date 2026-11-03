@@ -989,7 +989,7 @@ attempt_mariadb() {
     return 0
 }
 
-# Attempts to set up and install MySQL (8.4 preferred, 8.0 fallback) via dnf module streams.
+# Attempts to set up and install MySQL 8.4 via dnf module streams (8.0 is end of life).
 # Returns 0 on success (sets SQL_Version_Installed and Sql_option_value=mysql),
 # 1 on failure. Does NOT rollback - caller decides what to do next.
 attempt_mysql() {
@@ -1016,7 +1016,7 @@ attempt_mysql() {
         return 0
     fi
 
-    MySQL_Allowed_Versions=("8.4" "8.0")   # 8.4 LTS first (8.0 is end of life), 8.0 only as fallback
+    MySQL_Allowed_Versions=("8.4")   # MySQL 8.0 is end of life: 8.4 LTS only
     MySQL_Version=""
 
     for v in "${MySQL_Allowed_Versions[@]}"; do
@@ -1031,7 +1031,7 @@ attempt_mysql() {
     done
 
     if [[ -z "$MySQL_Version" ]]; then
-        echo -e "$yellow Neither supported MySQL version (8.0, 8.4) is available for $OS_ID $OS_VER. $reset"
+        echo -e "$yellow MySQL 8.4 is not available for $OS_ID $OS_VER (update the system: the mysql:8.4 module needs EL 8.10 / 9.6 or later). $reset"
         dnf module reset mysql -y 2>/dev/null
         return 1
     fi
@@ -1047,8 +1047,8 @@ attempt_mysql() {
 
     # Final safety check: confirm what actually got installed is one of the
     # two allowed series.
-    if [[ ! "$SQL_Version_Installed" =~ ^8\.0\. ]] && [[ ! "$SQL_Version_Installed" =~ ^8\.4\. ]]; then
-        echo -e "$yellow Installed MySQL version ($SQL_Version_Installed) is outside the supported 8.0/8.4 range. $reset"
+    if [[ ! "$SQL_Version_Installed" =~ ^8\.4\. ]]; then
+        echo -e "$yellow Installed MySQL version ($SQL_Version_Installed) is not MySQL 8.4. $reset"
         return 1
     fi
 
@@ -1077,7 +1077,7 @@ sql_installation() {
         echo -e "$green Using existing remote SQL server at $MySQL_HOST:${MySQL_PORT:-3306} - skipping local SQL server installation. $reset"
         SQL_Version_Installed="remote ($Sql_option_value @ $MySQL_HOST)"
     else
-        # Try the user's chosen engine first (MariaDB: 10.6/11.8, MySQL: 8.0/8.4;
+        # Try the user's chosen engine first (MariaDB: 10.6/11.8, MySQL: 8.4;
         # on EL10 both attempt_* functions instead install RHEL10's native
         # AppStream package for their engine - see attempt_mariadb/attempt_mysql).
         # If that engine has no supported version available for this OS/release,
@@ -1085,18 +1085,18 @@ sql_installation() {
         # back if NONE of the four supported versions are available anywhere.
         if [[ "$Preferred_Sql_option_value" == "mariadb" ]]; then
             if ! attempt_mariadb; then
-                echo -e "$yellow MariaDB (10.6/11.8) is not available on $OS_ID $OS_VER. Checking MySQL (8.0/8.4) instead... $reset"
+                echo -e "$yellow MariaDB (10.6/11.8) is not available on $OS_ID $OS_VER. Checking MySQL (8.4) instead... $reset"
                 if ! attempt_mysql; then
-                    echo -e "$red None of the supported SQL versions (MariaDB 10.6/11.8, MySQL 8.0/8.4) are available for $OS_ID $OS_VER. Rolling back... $reset"
+                    echo -e "$red None of the supported SQL versions (MariaDB 10.6/11.8, MySQL 8.4) are available for $OS_ID $OS_VER. Rolling back... $reset"
                     rollback "$Preferred_Sql_option_value" "$Php_option_value" "$Meili_option_value" "$Webserver_option_value" "$Node_option_value" "$Nats_option_value" "$Ssl_option_value" "$certfile" "$keyfile" "$cacertfile"
                     return
                 fi
             fi
         else
             if ! attempt_mysql; then
-                echo -e "$yellow MySQL (8.0/8.4) is not available on $OS_ID $OS_VER. Checking MariaDB (10.6/11.8) instead... $reset"
+                echo -e "$yellow MySQL (8.4) is not available on $OS_ID $OS_VER. Checking MariaDB (10.6/11.8) instead... $reset"
                 if ! attempt_mariadb; then
-                    echo -e "$red None of the supported SQL versions (MySQL 8.0/8.4, MariaDB 10.6/11.8) are available for $OS_ID $OS_VER. Rolling back... $reset"
+                    echo -e "$red None of the supported SQL versions (MySQL 8.4, MariaDB 10.6/11.8) are available for $OS_ID $OS_VER. Rolling back... $reset"
                     rollback "$Preferred_Sql_option_value" "$Php_option_value" "$Meili_option_value" "$Webserver_option_value" "$Node_option_value" "$Nats_option_value" "$Ssl_option_value" "$certfile" "$keyfile" "$cacertfile"
                     return
                 fi
@@ -2312,7 +2312,7 @@ sql_server_selection() {
             sleep 0.05
             echo -e "                                       "
             echo -e "$cyan Select your preferred SQL server [MySQL or MariaDB].$reset"
-            echo -e "$yellow Supported versions: MySQL 8.0/8.4 and MariaDB 10.6/11.8 only.$reset"
+            echo -e "$yellow Supported versions: MySQL 8.4 and MariaDB 10.6/11.8 only.$reset"
             echo -e "$yellow If your chosen engine has no supported version for this OS/release,$reset"
             echo -e "$yellow the script will automatically try the other engine instead.$reset"
 
