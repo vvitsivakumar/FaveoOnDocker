@@ -91,8 +91,10 @@ function run_worker(string $id): void
     // on Linux, and certificates (e.g. a large CA bundle) can exceed that. Instead the script is
     // sent over stdin as one base64 line, saved to a private temp file on the client server and
     // run from there (it deletes itself when it starts). The next stdin line is the sudo password.
+    // umask 077 only while the private temp file is written; the installer itself runs with
+    // umask 022, otherwise every folder it creates (e.g. /var/www/faveo) is unreadable for the web server.
     $ssh[] = 'umask 077; f=$(mktemp) || exit 1; '
-           . 'if IFS= read -r s && printf \'%s\' "$s" | base64 -d > "$f"; then unset s; bash "$f"; rc=$?; '
+           . 'if IFS= read -r s && printf \'%s\' "$s" | base64 -d > "$f"; then unset s; umask 022; bash "$f"; rc=$?; '
            . 'else echo "ERROR: could not receive the installer script."; rc=1; fi; rm -f "$f"; exit $rc';
 
     file_put_contents($log, sprintf("==> %s  Connecting to %s@%s:%d (%s login)\n",

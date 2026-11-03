@@ -13,6 +13,10 @@
 
 # Color variables (ANSI codes with escaped octal for portability)
 
+# Files and folders created by the installer must be readable by the web server,
+# whatever umask the caller (sudo, SSH, hardened server) passes in.
+umask 022
+
 red='\033[1;31m'
 green='\033[1;32m'
 yellow='\033[1;33m'
